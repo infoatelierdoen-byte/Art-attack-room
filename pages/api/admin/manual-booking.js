@@ -1,4 +1,5 @@
 const store = require("../../../lib/store-sql");
+const { requireStaff } = require("../../../lib/auth");
 
 // POST /api/admin/manual-booking
 // body: { serviceCode, dateISO, start, partySize, customer:{name,email,phone,birthDate},
@@ -12,6 +13,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (!requireStaff(req, res)) return;
 
   try {
     const { booking } = await store.createManualBooking(req.body);

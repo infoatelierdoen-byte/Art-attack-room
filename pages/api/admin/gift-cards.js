@@ -1,9 +1,12 @@
 const store = require("../../../lib/store-sql");
+const { requireStaff } = require("../../../lib/auth");
 
 // GET  /api/admin/gift-cards?q=... — zoeken op code/naam/e-mail (leeg = laatste 100)
 // POST /api/admin/gift-cards — manueel een cadeaubon aanmaken (bv. cash verkocht)
 //   body: { amount, purchaserName, purchaserEmail, note, expiresAtISO }
 export default async function handler(req, res) {
+  if (!requireStaff(req, res)) return;
+
   if (req.method === "GET") {
     try {
       const cards = await store.searchGiftCards(req.query.q || "");

@@ -1,4 +1,5 @@
 const store = require("../../../lib/store-sql");
+const { requireStaff } = require("../../../lib/auth");
 
 // POST /api/admin/extra-session
 // body: { serviceCode, dateISO, start, capacity (optioneel) }
@@ -11,6 +12,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (!requireStaff(req, res)) return;
 
   try {
     const session = await store.addExtraSession(req.body);

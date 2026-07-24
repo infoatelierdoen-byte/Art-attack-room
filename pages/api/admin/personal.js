@@ -1,4 +1,5 @@
 const store = require("../../../lib/store-sql");
+const { requireStaff } = require("../../../lib/auth");
 
 // POST /api/admin/personal — voegt een persoonlijke afspraak toe (bv.
 // "Dokter"). Altijd privé, nooit een klant of prijs — zie
@@ -9,6 +10,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (!requireStaff(req, res)) return;
 
   try {
     const appt = await store.addPersonalAppointment(req.body);

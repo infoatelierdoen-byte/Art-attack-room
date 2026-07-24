@@ -50,9 +50,17 @@ const EMPTY_EXTRA_FORM = { serviceCode: "", dateISO: "", start: "", capacity: ""
 const EMPTY_GIFT_CARD_FORM = { amount: "", purchaserName: "", purchaserEmail: "", note: "" };
 
 export default function Backend() {
+  // authRole: null = nog aan het checken, "none" = niet ingelogd,
+  // "admin"/"guest" = ingelogd. Komt nu van de server (sessie-cookie na
+  // inloggen), niet meer van een klikbare knop — voorheen kon eender wie
+  // zichzelf met die knop tot "Admin" maken zonder wachtwoord.
+  const [authRole, setAuthRole] = useState(null);
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+
   const [monday, setMonday] = useState(() => mondayOf(toISO(new Date())));
   const [events, setEvents] = useState([]);
-  const [role, setRole] = useState("admin"); // admin | guest
   const [loading, setLoading] = useState(true);
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
@@ -102,15 +110,51 @@ export default function Backend() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(monday); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Bij het laden van de pagina: checken of er al een geldige sessie is
+  // (bv. na een herlaad) — geen wachtwoord opnieuw nodig zolang de
+  // sessie-cookie (30 dagen) nog geldig is.
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(d => setAuthRole(d.role))
+      .catch(() => setAuthRole("none"));
+  }, []);
 
   useEffect(() => {
+    if (authRole !== "admin" && authRole !== "guest") return;
+    load(monday);
     fetch("/api/services").then(r => r.json()).then(d => {
       setServices(d.services || []);
       setManualForm(f => ({ ...f, serviceCode: f.serviceCode || (d.services && d.services[0]?.code) || "" }));
     });
     fetch("/api/admin/rooms").then(r => r.json()).then(d => setRooms(d.rooms || []));
-  }, []);
+  }, [authRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submitLogin(e) {
+    e.preventDefault();
+    setLoginError("");
+    setLoginSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: loginPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Inloggen mislukt.");
+      setAuthRole(data.role);
+      setLoginPassword("");
+    } catch (err) {
+      setLoginError(err.message);
+    } finally {
+      setLoginSubmitting(false);
+    }
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthRole("none");
+  }
 
   const weekDays = useMemo(() => {
     const start = parseISO(monday);
@@ -382,15 +426,18 @@ export default function Backend() {
   }
 
   function eventVisual(ev) {
-    const hideDetails = ev.visibility === "private" && role === "guest";
+    // ev.redacted komt van de server (/api/admin/sessions) — die stuurt voor
+    // de gast-rol de echte titel/klant/notitie/bedrag van privé-items al
+    // niet mee, dus hier is enkel nog een weergavekeuze nodig, geen echte
+    // toegangscontrole meer.
     if (ev.kind === "personal") {
       return {
         cls: "personal",
-        label: hideDetails ? "Privé" : ev.title,
-        sub: hideDetails ? "" : `${ev.start}–${ev.end}`
+        label: ev.redacted ? "Privé" : ev.title,
+        sub: ev.redacted ? "" : `${ev.start}–${ev.end}`
       };
     }
-    if (hideDetails) {
+    if (ev.redacted) {
       return { cls: "private", label: "Bezet", sub: ev.start };
     }
     const base = ev.service === "fluid_art" ? "fluid" : "attack";
@@ -402,14 +449,45 @@ export default function Backend() {
     return { cls, label, sub };
   }
 
+  if (authRole === null) {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{css}</style>
+        <p style={{ color: "#7C7668" }}>Laden…</p>
+      </div>
+    );
+  }
+
+  if (authRole === "none") {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+        <style>{css}</style>
+        <form className="modal" style={{ width: 320 }} onSubmit={submitLogin}>
+          <h3>Inloggen</h3>
+          <p style={{ fontSize: 13, color: "#7C7668" }}>Toegang tot de backoffice-agenda.</p>
+          <input
+            required autoFocus type="password" placeholder="Wachtwoord"
+            value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+          />
+          {loginError && <p className="error-text">{loginError}</p>}
+          <button type="submit" className="add-btn" style={{ marginTop: 8 }} disabled={loginSubmitting}>
+            {loginSubmitting ? "Bezig…" : "Inloggen"}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--admin-bg)", color: "#20221F", fontFamily: "inherit" }}>
       <style>{css}</style>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--admin-line)" }}>
         <h1 style={{ fontSize: 20, margin: 0, color: "var(--admin-accent)" }}>Agenda</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setRole("admin")} className={`role-btn ${role === "admin" ? "active" : ""}`}>Admin</button>
-          <button onClick={() => setRole("guest")} className={`role-btn ${role === "guest" ? "active" : ""}`}>Gast</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 13, color: "#7C7668" }}>
+            Ingelogd als {authRole === "admin" ? "Admin" : "Gast"}
+          </span>
+          <button className="nav-btn" onClick={logout}>Uitloggen</button>
         </div>
       </header>
 

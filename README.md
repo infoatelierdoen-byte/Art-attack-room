@@ -259,9 +259,11 @@ boekingen, en het room-sluiting-scherm. Voor de livegang (zie ook
    afgerond als eigen (niet-Wix-gebonden) systeem, zie hierboven. Nog wel als
    TODO: loyaltypunten (Wix Members/Loyalty Program) en de migratie van
    bestaande boekingen (Wix Bookings API).
-3. **Authenticatie.** De rolwissel admin/gast in `/backend` is nu een
-   simpele knop zonder login — er is nog geen echte gebruikersauthenticatie
-   per medewerker (tabel `staff_users` bestaat al in het schema).
+3. **Authenticatie per medewerker.** `/backend` vraagt ondertussen wel een
+   wachtwoord (zie "Backend beveiligen" hieronder) — maar dat is nog één
+   gedeeld wachtwoord per rol (admin/gast), geen individuele accounts per
+   medewerker. De `staff_users`-tabel staat daar al klaar voor, mocht dat
+   later nodig zijn.
 4. **Transacties/race conditions.** De roomtoewijzing bij het boeken
    gebeurt nu als een reeks losse queries, niet in een DB-transactie — bij
    gelijktijdige boekingen op exact hetzelfde tijdslot kan dat in zeldzame
@@ -461,6 +463,49 @@ terug op "7 dagen geleden"). Draai je niet op Vercel: elke cronjob of
 scheduler die een POST-request kan sturen (bv. een cron-taak op een VPS met
 `curl`, of een externe dienst zoals cron-job.org) volstaat evengoed.
 
+## Backend beveiligen (login)
+
+`/backend` en alle `/api/admin/*`-routes vragen nu een wachtwoord (`lib/auth.js`,
+`pages/api/auth/{login,logout,me}.js`) — voorheen kon iedereen die de URL kende
+er zonder inloggen bij. Twee gedeelde wachtwoorden (geen aparte accounts per
+medewerker, bewust eenvoudig gehouden voor een klein team):
+
+1. Zet in `.env.local` (lokaal) en in Vercel's Environment Variables (productie):
+
+```
+STAFF_ADMIN_PASSWORD=<kies een sterk wachtwoord>
+STAFF_GUEST_PASSWORD=<kies een ander wachtwoord, of laat leeg voor geen gast-toegang>
+AUTH_SECRET=<willekeurige lange tekenreeks, bv. via: openssl rand -hex 32>
+```
+
+2. Op `/backend` verschijnt nu eerst een inlogscherm. Met het admin-wachtwoord
+   zie je alles; met het gast-wachtwoord worden persoonlijke afspraken (bv.
+   "Tandarts") getoond als "Bezet"/"Privé" — en dat gebeurt nu **op de
+   server** (`pages/api/admin/sessions.js: redactForGuest()`), niet meer via
+   een knopje in de browser dat vroeger door iedereen zelf omgezet kon worden
+   naar "Admin". De sessie blijft 30 dagen geldig (cookie), dus niet elke
+   keer opnieuw inloggen.
+3. Wachtwoord gelekt of medewerker vertrokken? Wijzig gewoon
+   `STAFF_ADMIN_PASSWORD`/`STAFF_GUEST_PASSWORD` in Vercel en herdeploy. Wil
+   je bovendien alle op dat moment al ingelogde sessies onmiddellijk laten
+   verlopen (i.p.v. pas na 30 dagen), wijzig dan ook `AUTH_SECRET` — dat
+   maakt in één klap élke bestaande sessie ongeldig.
+
+De wekelijkse verzamelfactuur (`/api/admin/weekly-invoice`, aangeroepen door
+Vercel Cron, zie verderop) gebruikt bewust een aparte, tweede sleutel
+(`CRON_SECRET`) i.p.v. de staff-login — een cronjob kan namelijk niet
+inloggen. Zonder `CRON_SECRET` valt dat ene endpoint terug op de gewone
+staff-login (dus nooit volledig open), maar dan moet je het zelf manueel
+aanroepen als ingelogde medewerker i.p.v. automatisch via de cron.
+
+Let op: dit is een gedeeld-wachtwoord-systeem, geen volwaardige
+per-medewerker-authenticatie (de `staff_users`-tabel in `schema.sql` staat
+daar wel al voor klaar, voor een latere uitbreiding met individuele
+accounts). Voor de huidige schaal (klein team, één gedeelde toegang per
+rol) is dit een bewuste, pragmatische keuze — geverifieerd end-to-end
+(ingelogd/niet-ingelogd, verkeerd wachtwoord, redactie voor gast-rol, en de
+cron-uitzondering) tegen een echt draaiende server.
+
 ## Stijl aanpassen (kleur, lettertype)
 
 De kleuren (donkere achtergrond, accentkleur, ...) staan allemaal centraal in
@@ -529,7 +574,9 @@ lib/
   mollie.js          Mollie-wrapper (mock zonder API-key, echte @mollie/api-client mét)
   billit.js          Billit-koppeling: factuur per boeking (ApiKey + PartyID auth)
   email.js           Bevestigingsmail + cadeaubon-mail via Gmail SMTP (mock zonder app-wachtwoord)
+  auth.js            Staff-login: wachtwoord -> ondertekende sessie-cookie (admin/gast)
 pages/
+  api/auth/login.js, logout.js, me.js   in-/uitloggen + sessie-check voor /backend
   widget.js                       klant-boekingswidget (incl. cadeaubon-code invullen)
   widget/bevestiging.js           pagina na (mock-)betaling van een boeking
   widget/cadeaubon.js             cadeaubon kopen (bedrag kiezen + Mollie-checkout)

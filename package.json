@@ -8,12 +8,12 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "14.2.5",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "@mollie/api-client": "4.6.0",
+    "next": "^14.2.35",
+    "nodemailer": "^9.0.3",
     "pg": "8.22.0",
     "pg-mem": "3.0.14",
-    "@mollie/api-client": "4.6.0",
-    "nodemailer": "6.9.14"
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }
