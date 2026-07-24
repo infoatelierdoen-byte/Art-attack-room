@@ -24,15 +24,27 @@ export default async function handler(req, res) {
 
   try {
     const payment = await mollie.getPaymentStatus(id);
-    const bookingId = payment.metadata && payment.metadata.bookingId;
+    const meta = payment.metadata || {};
 
-    if (payment.status === "paid" && bookingId) {
-      await store.markBookingPaid(bookingId);
-      // TODO productie:
-      // - bevestigingsmail naar de klant + naar info.atelierdoen@gmail.com
-      // - loyaltypunten (+10) toekennen via Wix Members/Loyalty Program
-      //   (de Billit-factuur bij "ik wens een factuur" gebeurt al automatisch
-      //   binnen markBookingPaid(), zie lib/store-sql.js)
+    if (payment.status === "paid" && meta.giftCardPurchase) {
+      // Aankoop van een cadeaubon (niet gekoppeld aan een boeking) — de
+      // gift_cards-rij (met gegenereerde code) wordt hier pas aangemaakt,
+      // en fulfillGiftCardPurchase() is zelf idempotent (mollie_payment_id
+      // als unieke sleutel) mocht Mollie deze webhook dubbel afvuren.
+      await store.fulfillGiftCardPurchase({
+        amount: meta.amount,
+        purchaserName: meta.purchaserName,
+        purchaserEmail: meta.purchaserEmail,
+        recipientNote: meta.recipientNote,
+        molliePaymentId: payment.id
+      });
+    } else if (payment.status === "paid" && meta.bookingId) {
+      await store.markBookingPaid(meta.bookingId);
+      // De bevestigingsmail (klant + team), de Billit-factuur (bij "ik
+      // wens een factuur"), en het afschrijven van een eventueel gebruikte
+      // cadeaubon gebeuren alle drie automatisch binnen markBookingPaid(),
+      // zie lib/store-sql.js.
+      // TODO productie: loyaltypunten (+10) toekennen via Wix Members/Loyalty Program.
     }
     res.status(200).json({ received: true });
   } catch (err) {

@@ -13,6 +13,7 @@ CREATE TYPE discount_type AS ENUM ('gift_voucher', 'loyalty_points', 'promo_code
 CREATE TYPE staff_role AS ENUM ('admin', 'guest');
 CREATE TYPE session_visibility AS ENUM ('standard', 'private');
 CREATE TYPE session_kind AS ENUM ('service', 'personal');
+CREATE TYPE gift_card_status AS ENUM ('active', 'disabled', 'depleted');
 
 -- ---------------------------------------------------------
 -- Back-end gebruikers (medewerkers), niet te verwarren met customers.
@@ -149,6 +150,33 @@ CREATE TABLE customers (
 );
 
 -- ---------------------------------------------------------
+-- Cadeaubonnen — volledig eigen systeem (bewust NIET gekoppeld aan Wix
+-- Gift Cards API, zie overleg). Bruikbaar voor élke workshop, voor een
+-- door de klant zelf gekozen bedrag. Zowel online aangekocht (Mollie) als
+-- manueel aangemaakt door het team (bv. cash verkocht, of geïmporteerd uit
+-- een vorig systeem — zie db/import-gift-cards.sql voor de import van de
+-- bestaande Wix- en FareHarbor-cadeaubonnen). Staat bewust VOOR bookings
+-- hieronder: die tabel heeft een FK naar gift_cards(id) nodig.
+-- ---------------------------------------------------------
+CREATE TABLE gift_cards (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                TEXT NOT NULL UNIQUE,
+    initial_amount      NUMERIC(8,2) NOT NULL,
+    remaining_amount    NUMERIC(8,2) NOT NULL,
+    status              gift_card_status NOT NULL DEFAULT 'active',
+    purchaser_name      TEXT,
+    purchaser_email     TEXT,
+    recipient_note      TEXT,               -- bv. "Voor Marie, gefeliciteerd!"
+    source              TEXT NOT NULL DEFAULT 'manual', -- 'purchased' | 'manual' | 'imported_wix' | 'imported_fareharbor'
+    mollie_payment_id   TEXT,               -- enkel bij source = 'purchased'
+    expires_at          DATE,               -- NULL = verloopt niet (bv. geïmporteerde bonnen met eigen regels)
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    disabled_at         TIMESTAMPTZ
+);
+
+CREATE INDEX idx_gift_cards_code ON gift_cards(code);
+
+-- ---------------------------------------------------------
 -- Boekingen: 1 rij per reservatie (= 1 groep) op een sessie
 -- ---------------------------------------------------------
 CREATE TABLE bookings (
@@ -170,6 +198,9 @@ CREATE TABLE bookings (
     invoice_company_name    TEXT,
     invoice_company_address TEXT,
     billit_invoice_id       TEXT,
+    gift_card_id            UUID REFERENCES gift_cards(id),  -- NULL = geen cadeaubon gebruikt
+    gift_card_amount        NUMERIC(8,2),                    -- bedrag dat de cadeaubon dekt; effectief afgeschreven pas bij bevestigde betaling
+    gift_card_redeemed_at   TIMESTAMPTZ,                     -- voorkomt dubbele afschrijving bij een herhaalde webhook-aanroep
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

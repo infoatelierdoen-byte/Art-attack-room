@@ -34,6 +34,21 @@ function serviceLabel(code) {
   return code;
 }
 
+const EMPTY_MANUAL_FORM = {
+  serviceCode: "", dateISO: "", start: "", partySize: 2,
+  name: "", email: "", phone: "", birthDate: "", note: "",
+  paymentMethod: "cash", invoiceRequested: false, vatNumber: "", companyName: "",
+  giftCardCode: "", reserveOnly: false
+};
+
+const EMPTY_CLOSE_FORM = {
+  dateISO: "", allDay: false, start: "", allRooms: false, roomId: "", reason: ""
+};
+
+const EMPTY_EXTRA_FORM = { serviceCode: "", dateISO: "", start: "", capacity: "" };
+
+const EMPTY_GIFT_CARD_FORM = { amount: "", purchaserName: "", purchaserEmail: "", note: "" };
+
 export default function Backend() {
   const [monday, setMonday] = useState(() => mondayOf(toISO(new Date())));
   const [events, setEvents] = useState([]);
@@ -41,6 +56,43 @@ export default function Backend() {
   const [loading, setLoading] = useState(true);
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
+
+  const [services, setServices] = useState([]);
+  const [rooms, setRooms] = useState([]);
+
+  const [showAddBooking, setShowAddBooking] = useState(false);
+  const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
+  const [manualSlots, setManualSlots] = useState([]);
+  const [manualLoadingSlots, setManualLoadingSlots] = useState(false);
+  const [manualError, setManualError] = useState("");
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  const [showCloseRoom, setShowCloseRoom] = useState(false);
+  const [closeForm, setCloseForm] = useState(EMPTY_CLOSE_FORM);
+  const [closeSlots, setCloseSlots] = useState([]);
+  const [closeLoadingSlots, setCloseLoadingSlots] = useState(false);
+  const [closeError, setCloseError] = useState("");
+  const [closeSubmitting, setCloseSubmitting] = useState(false);
+
+  const [showAddExtra, setShowAddExtra] = useState(false);
+  const [extraForm, setExtraForm] = useState(EMPTY_EXTRA_FORM);
+  const [extraError, setExtraError] = useState("");
+  const [extraSubmitting, setExtraSubmitting] = useState(false);
+
+  const [showGiftCards, setShowGiftCards] = useState(false);
+  const [giftCardQuery, setGiftCardQuery] = useState("");
+  const [giftCardResults, setGiftCardResults] = useState([]);
+  const [giftCardLoading, setGiftCardLoading] = useState(false);
+  const [giftCardListError, setGiftCardListError] = useState("");
+  const [showAddGiftCard, setShowAddGiftCard] = useState(false);
+  const [giftCardForm, setGiftCardForm] = useState(EMPTY_GIFT_CARD_FORM);
+  const [giftCardError, setGiftCardError] = useState("");
+  const [giftCardSubmitting, setGiftCardSubmitting] = useState(false);
+
+  const [confirmTarget, setConfirmTarget] = useState(null); // ev met bookingId, of null
+  const [confirmPaymentMethod, setConfirmPaymentMethod] = useState("cash");
+  const [confirmError, setConfirmError] = useState("");
+  const [confirmSubmitting, setConfirmSubmitting] = useState(false);
 
   function load(week) {
     setLoading(true);
@@ -51,6 +103,14 @@ export default function Backend() {
   }
 
   useEffect(() => { load(monday); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    fetch("/api/services").then(r => r.json()).then(d => {
+      setServices(d.services || []);
+      setManualForm(f => ({ ...f, serviceCode: f.serviceCode || (d.services && d.services[0]?.code) || "" }));
+    });
+    fetch("/api/admin/rooms").then(r => r.json()).then(d => setRooms(d.rooms || []));
+  }, []);
 
   const weekDays = useMemo(() => {
     const start = parseISO(monday);
@@ -73,6 +133,254 @@ export default function Backend() {
     load(monday);
   }
 
+  // --- Manuele boeking ---
+
+  function openAddBooking() {
+    setManualForm({ ...EMPTY_MANUAL_FORM, serviceCode: services[0]?.code || "" });
+    setManualSlots([]);
+    setManualError("");
+    setShowAddBooking(true);
+  }
+
+  function fetchManualSlots(serviceCode, dateISO, partySize) {
+    if (!serviceCode || !dateISO) { setManualSlots([]); return; }
+    setManualLoadingSlots(true);
+    fetch(`/api/availability?service=${serviceCode}&date=${dateISO}&partySize=${partySize || 1}`)
+      .then(r => r.json())
+      .then(d => setManualSlots(d.slots || []))
+      .finally(() => setManualLoadingSlots(false));
+  }
+
+  function updateManualField(patch) {
+    const next = { ...manualForm, ...patch };
+    setManualForm(next);
+    if ("serviceCode" in patch || "dateISO" in patch || "partySize" in patch) {
+      setManualForm(f => ({ ...f, start: "" }));
+      fetchManualSlots(next.serviceCode, next.dateISO, next.partySize);
+    }
+  }
+
+  async function submitManual(e) {
+    e.preventDefault();
+    setManualError("");
+    setManualSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/manual-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceCode: manualForm.serviceCode,
+          dateISO: manualForm.dateISO,
+          start: manualForm.start,
+          partySize: Number(manualForm.partySize),
+          customer: {
+            name: manualForm.name, email: manualForm.email,
+            phone: manualForm.phone, birthDate: manualForm.birthDate || null
+          },
+          note: manualForm.note,
+          paymentMethod: manualForm.paymentMethod,
+          invoiceRequested: manualForm.invoiceRequested,
+          invoiceDetails: manualForm.invoiceRequested
+            ? { vatNumber: manualForm.vatNumber, companyName: manualForm.companyName }
+            : null,
+          giftCardCode: manualForm.giftCardCode.trim() || null,
+          reserveOnly: manualForm.reserveOnly
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowAddBooking(false);
+      load(monday);
+    } catch (err) {
+      setManualError(err.message);
+    } finally {
+      setManualSubmitting(false);
+    }
+  }
+
+  // --- Room(s) sluiten ---
+
+  function openCloseRoom() {
+    setCloseForm(EMPTY_CLOSE_FORM);
+    setCloseSlots([]);
+    setCloseError("");
+    setShowCloseRoom(true);
+  }
+
+  function fetchCloseSlots(dateISO) {
+    if (!dateISO) { setCloseSlots([]); return; }
+    setCloseLoadingSlots(true);
+    fetch(`/api/availability?service=art_attack_room&date=${dateISO}`)
+      .then(r => r.json())
+      .then(d => setCloseSlots(d.slots || []))
+      .finally(() => setCloseLoadingSlots(false));
+  }
+
+  function updateCloseField(patch) {
+    const next = { ...closeForm, ...patch };
+    setCloseForm(next);
+    if ("dateISO" in patch) {
+      setCloseForm(f => ({ ...f, start: "" }));
+      fetchCloseSlots(next.dateISO);
+    }
+  }
+
+  async function submitClose(e) {
+    e.preventDefault();
+    setCloseError("");
+    setCloseSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/close-room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateISO: closeForm.dateISO,
+          allDay: closeForm.allDay,
+          start: closeForm.allDay ? null : closeForm.start,
+          allRooms: closeForm.allRooms,
+          roomId: closeForm.allRooms ? null : closeForm.roomId,
+          reason: closeForm.reason
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowCloseRoom(false);
+      load(monday);
+    } catch (err) {
+      setCloseError(err.message);
+    } finally {
+      setCloseSubmitting(false);
+    }
+  }
+
+  // --- Extra sessie (eenmalig, buiten het vaste uurrooster) ---
+
+  function openAddExtra() {
+    setExtraForm({ ...EMPTY_EXTRA_FORM, serviceCode: services[0]?.code || "" });
+    setExtraError("");
+    setShowAddExtra(true);
+  }
+
+  async function submitExtra(e) {
+    e.preventDefault();
+    setExtraError("");
+    setExtraSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/extra-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceCode: extraForm.serviceCode,
+          dateISO: extraForm.dateISO,
+          start: extraForm.start,
+          capacity: extraForm.capacity || null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowAddExtra(false);
+      load(monday);
+    } catch (err) {
+      setExtraError(err.message);
+    } finally {
+      setExtraSubmitting(false);
+    }
+  }
+
+  // --- Cadeaubonnen ---
+
+  function fetchGiftCards(query) {
+    setGiftCardLoading(true);
+    setGiftCardListError("");
+    fetch(`/api/admin/gift-cards?q=${encodeURIComponent(query || "")}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) throw new Error(d.error);
+        setGiftCardResults(d.cards || []);
+      })
+      .catch(err => setGiftCardListError(err.message))
+      .finally(() => setGiftCardLoading(false));
+  }
+
+  function openGiftCards() {
+    setGiftCardQuery("");
+    setShowAddGiftCard(false);
+    setShowGiftCards(true);
+    fetchGiftCards("");
+  }
+
+  async function toggleGiftCardStatus(card) {
+    const newStatus = card.status === "active" ? "disabled" : "active";
+    try {
+      const res = await fetch(`/api/admin/gift-cards/${card.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      fetchGiftCards(giftCardQuery);
+    } catch (err) {
+      setGiftCardListError(err.message);
+    }
+  }
+
+  async function submitGiftCard(e) {
+    e.preventDefault();
+    setGiftCardError("");
+    setGiftCardSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/gift-cards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: Number(giftCardForm.amount),
+          purchaserName: giftCardForm.purchaserName || null,
+          purchaserEmail: giftCardForm.purchaserEmail || null,
+          note: giftCardForm.note || null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowAddGiftCard(false);
+      setGiftCardForm(EMPTY_GIFT_CARD_FORM);
+      fetchGiftCards(giftCardQuery);
+    } catch (err) {
+      setGiftCardError(err.message);
+    } finally {
+      setGiftCardSubmitting(false);
+    }
+  }
+
+  // --- Reservering bevestigen (manuele boeking die nog niet betaald was) ---
+
+  function openConfirmBooking(ev) {
+    setConfirmTarget(ev);
+    setConfirmPaymentMethod("cash");
+    setConfirmError("");
+  }
+
+  async function submitConfirmBooking(e) {
+    e.preventDefault();
+    setConfirmError("");
+    setConfirmSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/confirm-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId: confirmTarget.bookingId, paymentMethod: confirmPaymentMethod })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setConfirmTarget(null);
+      load(monday);
+    } catch (err) {
+      setConfirmError(err.message);
+    } finally {
+      setConfirmSubmitting(false);
+    }
+  }
+
   function eventVisual(ev) {
     const hideDetails = ev.visibility === "private" && role === "guest";
     if (ev.kind === "personal") {
@@ -86,9 +394,11 @@ export default function Backend() {
       return { cls: "private", label: "Bezet", sub: ev.start };
     }
     const base = ev.service === "fluid_art" ? "fluid" : "attack";
-    const cls = ev.visibility === "private" ? `${base} private-visible` : base;
+    let cls = ev.visibility === "private" ? `${base} private-visible` : base;
+    if (ev.pendingConfirmation) cls += " pending-reservation";
     const label = ev.customer || serviceLabel(ev.service);
-    const sub = ev.customer ? `${serviceLabel(ev.service)} · ${ev.partySize}p` : `${ev.booked ?? 0}/${ev.capacity ?? "-"}`;
+    let sub = ev.customer ? `${serviceLabel(ev.service)} · ${ev.partySize}p` : `${ev.booked ?? 0}/${ev.capacity ?? "-"}`;
+    if (ev.pendingConfirmation) sub += " · reservering";
     return { cls, label, sub };
   }
 
@@ -103,16 +413,20 @@ export default function Backend() {
         </div>
       </header>
 
-      <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button className="nav-btn" onClick={() => shiftWeek(-1)}>‹ vorige week</button>
         <span style={{ fontWeight: 700 }}>
           week van {weekDays[0].toLocaleDateString("nl-BE", { day: "2-digit", month: "long" })}
         </span>
         <button className="nav-btn" onClick={() => shiftWeek(1)}>volgende week ›</button>
         <button className="nav-btn" onClick={() => load(mondayOf(toISO(new Date())))}>vandaag</button>
-        <button style={{ marginLeft: "auto" }} className="add-btn" onClick={() => setShowAddPersonal(true)}>
-          + Persoonlijke afspraak
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button className="add-btn secondary" onClick={openGiftCards}>Cadeaubonnen</button>
+          <button className="add-btn secondary" onClick={openCloseRoom}>+ Room(s) sluiten</button>
+          <button className="add-btn secondary" onClick={() => setShowAddPersonal(true)}>+ Persoonlijke afspraak</button>
+          <button className="add-btn secondary" onClick={openAddExtra}>+ Extra sessie</button>
+          <button className="add-btn" onClick={openAddBooking}>+ Boeking toevoegen</button>
+        </div>
       </div>
 
       {loading ? (
@@ -139,7 +453,13 @@ export default function Backend() {
                       const height = ((endMin - startMin) / 60) * HOUR_PX;
                       const v = eventVisual(ev);
                       return (
-                        <div key={idx} className={`cal-event ${v.cls}`} style={{ top, height }}>
+                        <div
+                          key={idx}
+                          className={`cal-event ${v.cls}${ev.pendingConfirmation ? " clickable" : ""}`}
+                          style={{ top, height }}
+                          onClick={ev.pendingConfirmation ? () => openConfirmBooking(ev) : undefined}
+                          title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
+                        >
                           <div className="cal-event-label">{v.label}</div>
                           {v.sub && <div className="cal-event-sub">{v.sub}</div>}
                         </div>
@@ -177,6 +497,330 @@ export default function Backend() {
           </form>
         </div>
       )}
+
+      {showAddBooking && (
+        <div className="modal-backdrop" onClick={() => setShowAddBooking(false)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitManual}>
+            <h3>Boeking toevoegen</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              Voor een boeking die je zelf ingeeft (bv. na een telefoontje). Nooit via Mollie —
+              kies hieronder hoe er (al dan niet) betaald werd. Verwacht je dat de details nog
+              wijzigen? Vink "enkel reserveren" aan: dan wordt niets definitief (geen factuur,
+              geen cadeaubon-afschrijving) tot je de boeking later zelf bevestigt.
+            </p>
+
+            <label className="field-label">Workshop</label>
+            <select value={manualForm.serviceCode} onChange={e => updateManualField({ serviceCode: e.target.value })}>
+              {services.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+            </select>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Datum</label>
+                <input required type="date" value={manualForm.dateISO}
+                  onChange={e => updateManualField({ dateISO: e.target.value })} />
+              </div>
+              <div style={{ width: 90 }}>
+                <label className="field-label">Personen</label>
+                <input required type="number" min={1} value={manualForm.partySize}
+                  onChange={e => updateManualField({ partySize: e.target.value })} />
+              </div>
+            </div>
+
+            {manualForm.dateISO && (
+              <div>
+                <label className="field-label">Tijdstip</label>
+                {manualLoadingSlots && <p className="muted-text">Beschikbaarheid laden…</p>}
+                {!manualLoadingSlots && manualSlots.length === 0 && <p className="muted-text">Geen sessies op deze dag.</p>}
+                <div className="slot-row">
+                  {manualSlots.map(s => (
+                    <button type="button" key={s.start} disabled={!s.bookable}
+                      className={`slot-chip ${manualForm.start === s.start ? "selected" : ""} ${!s.bookable ? "disabled" : ""}`}
+                      onClick={() => setManualForm(f => ({ ...f, start: s.start }))}>
+                      {s.start}{!s.bookable ? " (volzet)" : ""}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <input required placeholder="Naam klant" value={manualForm.name}
+              onChange={e => setManualForm({ ...manualForm, name: e.target.value })} />
+            <input required type="email" placeholder="E-mail" value={manualForm.email}
+              onChange={e => setManualForm({ ...manualForm, email: e.target.value })} />
+            <input placeholder="Telefoon (optioneel)" value={manualForm.phone}
+              onChange={e => setManualForm({ ...manualForm, phone: e.target.value })} />
+            <div>
+              <label className="field-label">Geboortedatum (optioneel)</label>
+              <input type="date" value={manualForm.birthDate}
+                onChange={e => setManualForm({ ...manualForm, birthDate: e.target.value })} />
+            </div>
+            <textarea placeholder="Notitie (optioneel)" value={manualForm.note}
+              onChange={e => setManualForm({ ...manualForm, note: e.target.value })} style={{ minHeight: 50 }} />
+
+            <input placeholder="Cadeaubon-code (optioneel)" value={manualForm.giftCardCode}
+              onChange={e => setManualForm({ ...manualForm, giftCardCode: e.target.value })} />
+
+            <label className="checkbox-row">
+              <input type="checkbox" checked={manualForm.reserveOnly}
+                onChange={e => setManualForm({ ...manualForm, reserveOnly: e.target.checked })} />
+              Enkel reserveren (nog niet bevestigd/betaald)
+            </label>
+
+            <label className="field-label">
+              {manualForm.reserveOnly ? "Verwachte betaalwijze (later te bevestigen)" : "Betaalwijze"}
+            </label>
+            <select value={manualForm.paymentMethod} onChange={e => setManualForm({ ...manualForm, paymentMethod: e.target.value })}>
+              <option value="cash">Cash</option>
+              <option value="bank_transfer">Overschrijving</option>
+              <option value="other">Andere</option>
+            </select>
+
+            <label className="checkbox-row">
+              <input type="checkbox" checked={manualForm.invoiceRequested}
+                onChange={e => setManualForm({ ...manualForm, invoiceRequested: e.target.checked })} />
+              Klant wenst een factuur
+            </label>
+            {manualForm.invoiceRequested && (
+              <>
+                <input placeholder="BTW-nummer" value={manualForm.vatNumber}
+                  onChange={e => setManualForm({ ...manualForm, vatNumber: e.target.value })} />
+                <input placeholder="Bedrijfsnaam" value={manualForm.companyName}
+                  onChange={e => setManualForm({ ...manualForm, companyName: e.target.value })} />
+              </>
+            )}
+
+            {manualError && <p className="error-text">{manualError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowAddBooking(false)}>Annuleren</button>
+              <button type="submit" className="add-btn" disabled={!manualForm.start || manualSubmitting}>
+                {manualSubmitting ? "Bezig…" : manualForm.reserveOnly ? "Reserveren" : "Toevoegen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showCloseRoom && (
+        <div className="modal-backdrop" onClick={() => setShowCloseRoom(false)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitClose}>
+            <h3>Room(s) sluiten</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              Enkel van toepassing op Art Attack Room. Een room met een bestaande klantboeking
+              wordt nooit overschreven.
+            </p>
+
+            <label className="field-label">Datum</label>
+            <input required type="date" value={closeForm.dateISO}
+              onChange={e => updateCloseField({ dateISO: e.target.value })} />
+
+            <label className="checkbox-row">
+              <input type="checkbox" checked={closeForm.allDay}
+                onChange={e => setCloseForm({ ...closeForm, allDay: e.target.checked, start: "" })} />
+              Hele dag sluiten (alle tijdstippen)
+            </label>
+
+            {!closeForm.allDay && closeForm.dateISO && (
+              <div>
+                <label className="field-label">Tijdstip</label>
+                {closeLoadingSlots && <p className="muted-text">Beschikbaarheid laden…</p>}
+                {!closeLoadingSlots && closeSlots.length === 0 && <p className="muted-text">Geen sessies op deze dag.</p>}
+                <div className="slot-row">
+                  {closeSlots.map(s => (
+                    <button type="button" key={s.start}
+                      className={`slot-chip ${closeForm.start === s.start ? "selected" : ""}`}
+                      onClick={() => setCloseForm(f => ({ ...f, start: s.start }))}>
+                      {s.start}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="checkbox-row">
+              <input type="checkbox" checked={closeForm.allRooms}
+                onChange={e => setCloseForm({ ...closeForm, allRooms: e.target.checked, roomId: "" })} />
+              Alle rooms
+            </label>
+            {!closeForm.allRooms && (
+              <select value={closeForm.roomId} onChange={e => setCloseForm({ ...closeForm, roomId: e.target.value })}>
+                <option value="">Kies een room…</option>
+                {rooms.map(r => <option key={r.id} value={r.id}>{r.label} ({r.capacity}p)</option>)}
+              </select>
+            )}
+
+            <input placeholder='Reden (bv. "Sluitingsdag", "Onderhoud")' value={closeForm.reason}
+              onChange={e => setCloseForm({ ...closeForm, reason: e.target.value })} />
+
+            {closeError && <p className="error-text">{closeError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowCloseRoom(false)}>Annuleren</button>
+              <button
+                type="submit"
+                className="add-btn"
+                disabled={(!closeForm.allDay && !closeForm.start) || (!closeForm.allRooms && !closeForm.roomId) || closeSubmitting}
+              >
+                {closeSubmitting ? "Bezig…" : "Sluiten"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showAddExtra && (
+        <div className="modal-backdrop" onClick={() => setShowAddExtra(false)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitExtra}>
+            <h3>Extra sessie toevoegen</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              Voor een eenmalig extra tijdstip buiten het vaste uurrooster — bv. Fluid Art zit een
+              week volzet, en je plant een extra sessie de week erna. Verschijnt meteen als
+              boekbaar tijdstip in de klant-widget.
+            </p>
+
+            <label className="field-label">Workshop</label>
+            <select value={extraForm.serviceCode} onChange={e => setExtraForm({ ...extraForm, serviceCode: e.target.value })}>
+              {services.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+            </select>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Datum</label>
+                <input required type="date" value={extraForm.dateISO}
+                  onChange={e => setExtraForm({ ...extraForm, dateISO: e.target.value })} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Tijdstip</label>
+                <input required type="time" value={extraForm.start}
+                  onChange={e => setExtraForm({ ...extraForm, start: e.target.value })} />
+              </div>
+            </div>
+
+            {!services.find(s => s.code === extraForm.serviceCode)?.usesRoomAssignment && (
+              <div>
+                <label className="field-label">Capaciteit (optioneel — standaard zoals normale sessies)</label>
+                <input type="number" min={1} placeholder="bv. 10" value={extraForm.capacity}
+                  onChange={e => setExtraForm({ ...extraForm, capacity: e.target.value })} />
+              </div>
+            )}
+
+            {extraError && <p className="error-text">{extraError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowAddExtra(false)}>Annuleren</button>
+              <button type="submit" className="add-btn" disabled={extraSubmitting}>
+                {extraSubmitting ? "Bezig…" : "Toevoegen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showGiftCards && (
+        <div className="modal-backdrop" onClick={() => setShowGiftCards(false)}>
+          <div className="modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
+            <h3>Cadeaubonnen</h3>
+
+            <input
+              placeholder="Zoek op code, naam of e-mail…"
+              value={giftCardQuery}
+              onChange={e => { setGiftCardQuery(e.target.value); fetchGiftCards(e.target.value); }}
+            />
+
+            {giftCardLoading && <p className="muted-text">Laden…</p>}
+            {giftCardListError && <p className="error-text">{giftCardListError}</p>}
+            {!giftCardLoading && giftCardResults.length === 0 && (
+              <p className="muted-text">Geen cadeaubonnen gevonden.</p>
+            )}
+
+            <div className="gift-card-list">
+              {giftCardResults.map(card => (
+                <div key={card.id} className="gift-card-row">
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{card.code}</div>
+                    <div className="muted-text" style={{ margin: 0 }}>
+                      €{card.remainingAmount.toFixed(2)} / €{card.initialAmount.toFixed(2)}
+                      {card.purchaserName ? ` · ${card.purchaserName}` : ""}
+                      {card.expiresAt ? ` · geldig tot ${card.expiresAt}` : ""}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className={`gift-card-status ${card.status}`}>
+                      {card.status === "active" ? "actief" : card.status === "disabled" ? "uitgeschakeld" : "opgebruikt"}
+                    </span>
+                    {card.status !== "depleted" && (
+                      <button type="button" className="add-btn secondary" style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => toggleGiftCardStatus(card)}>
+                        {card.status === "active" ? "Uitschakelen" : "Activeren"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {!showAddGiftCard ? (
+              <button type="button" className="add-btn" style={{ marginTop: 8 }} onClick={() => setShowAddGiftCard(true)}>
+                + Nieuwe cadeaubon
+              </button>
+            ) : (
+              <form onSubmit={submitGiftCard} style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                <input required type="number" min="1" placeholder="Bedrag (€)" value={giftCardForm.amount}
+                  onChange={e => setGiftCardForm({ ...giftCardForm, amount: e.target.value })} />
+                <input placeholder="Naam koper (optioneel)" value={giftCardForm.purchaserName}
+                  onChange={e => setGiftCardForm({ ...giftCardForm, purchaserName: e.target.value })} />
+                <input type="email" placeholder="E-mail koper (optioneel)" value={giftCardForm.purchaserEmail}
+                  onChange={e => setGiftCardForm({ ...giftCardForm, purchaserEmail: e.target.value })} />
+                <input placeholder="Notitie (optioneel)" value={giftCardForm.note}
+                  onChange={e => setGiftCardForm({ ...giftCardForm, note: e.target.value })} />
+                {giftCardError && <p className="error-text">{giftCardError}</p>}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={() => setShowAddGiftCard(false)}>Annuleren</button>
+                  <button type="submit" className="add-btn" disabled={giftCardSubmitting}>
+                    {giftCardSubmitting ? "Bezig…" : "Aanmaken"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <button type="button" onClick={() => setShowGiftCards(false)}>Sluiten</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmTarget && (
+        <div className="modal-backdrop" onClick={() => setConfirmTarget(null)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitConfirmBooking}>
+            <h3>Reservering bevestigen</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              {confirmTarget.customer} — {serviceLabel(confirmTarget.service)}, {confirmTarget.partySize}p,{" "}
+              {confirmTarget.dateISO} om {confirmTarget.start}
+              {confirmTarget.amount != null && <> — €{confirmTarget.amount.toFixed(2)} te betalen</>}.
+              Dit registreert de boeking als definitief betaald (en maakt de factuur/cadeaubon-
+              afschrijving alsnog in orde, indien van toepassing) — nog steeds zonder bevestigingsmail.
+            </p>
+
+            <label className="field-label">Betaalwijze</label>
+            <select value={confirmPaymentMethod} onChange={e => setConfirmPaymentMethod(e.target.value)}>
+              <option value="cash">Cash</option>
+              <option value="bank_transfer">Overschrijving</option>
+              <option value="other">Andere</option>
+            </select>
+
+            {confirmError && <p className="error-text">{confirmError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setConfirmTarget(null)}>Annuleren</button>
+              <button type="submit" className="add-btn" disabled={confirmSubmitting}>
+                {confirmSubmitting ? "Bezig…" : "Bevestigen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -186,6 +830,8 @@ const css = `
   .role-btn.active { background: var(--admin-accent); color: #fff; border-color: var(--admin-accent); }
   .nav-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--admin-line); background: #fff; }
   .add-btn { padding: 8px 14px; border-radius: 8px; border: none; background: var(--admin-accent); color: #fff; font-weight: 700; }
+  .add-btn.secondary { background: #fff; color: var(--admin-accent); border: 1px solid var(--admin-accent); }
+  .add-btn:disabled { opacity: 0.5; }
   .week-body { display: flex; padding: 0 20px 40px; gap: 0; }
   .week-time-col { width: 56px; padding-top: 34px; }
   .hour-label { height: ${HOUR_PX}px; font-size: 11px; color: #7C7668; }
@@ -201,7 +847,25 @@ const css = `
   .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); }
   .cal-event.personal { background: var(--private-bg); border-left: 3px solid #7C7668; font-style: italic; }
   .cal-event.private { background: var(--private-bg); border-left: 3px solid #7C7668; }
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; }
-  .modal { background: #fff; padding: 20px; border-radius: 12px; width: 320px; display: flex; flex-direction: column; gap: 8px; }
-  .modal input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); }
+  .cal-event.pending-reservation { border: 1px dashed #7C7668; border-left-width: 3px; opacity: 0.85; }
+  .cal-event.clickable { cursor: pointer; }
+  .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
+  .modal { background: #fff; padding: 20px; border-radius: 12px; width: 340px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .modal input, .modal select, .modal textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); font-family: inherit; width: 100%; box-sizing: border-box; }
+  .field-label { font-size: 12px; color: #7C7668; margin-top: 4px; }
+  .muted-text { font-size: 12px; color: #7C7668; margin: 4px 0; }
+  .error-text { color: #C0392B; font-size: 13px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .checkbox-row input { width: auto; }
+  .slot-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .slot-chip { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--admin-line); background: #fff; font-size: 13px; width: auto; }
+  .slot-chip.selected { background: var(--admin-accent); color: #fff; border-color: var(--admin-accent); }
+  .slot-chip.disabled { opacity: 0.4; }
+  .gift-card-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin-top: 6px; }
+  .gift-card-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; }
+  .gift-card-status { font-size: 11px; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .gift-card-status.active { background: #E4F2E1; color: #2F7A3D; }
+  .gift-card-status.disabled { background: #F1EEE7; color: #7C7668; }
+  .gift-card-status.depleted { background: #FBE9E1; color: var(--admin-accent); }
 `;

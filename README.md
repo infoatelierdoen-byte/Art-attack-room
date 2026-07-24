@@ -69,10 +69,45 @@ licht gekomen en gefixt (zie diezelfde sectie).
   afspraak zoals "Dokter" toevoegen die altijd privé is en nooit een klant
   of prijs heeft (`sessions.kind = 'personal'`) — apart van een privé
   gemarkeerde, wél betalende groepsboeking.
-- **Room-sluitingen** (`lib/store-sql.js: closeRoom()`): een individuele
-  room of alle rooms sluiten voor een tijdslot of een volledige dag,
-  weggeschreven als `room_bookings` met `block_type = 'closed'`. Nog geen
-  scherm in `/backend` om dit te bedienen (zie hieronder).
+- **Manuele boeking** (`/backend` + `/api/admin/manual-booking`): een
+  boeking die het team zelf ingeeft (bv. na een telefoontje) — zelfde
+  tijdslot-/roomlogica als de klant-widget, maar geen Mollie-betaallink: je
+  kiest een betaalwijze (cash/overschrijving/andere) en de boeking wordt
+  meteen als betaald geregistreerd (`booked_via = 'backoffice'`). Wél de
+  Billit-factuur bij aanvraag, maar bewust GEEN bevestigingsmail — bij een
+  manuele boeking heeft het team de klant al rechtstreeks gesproken, dus
+  zowel de klantbevestiging als de interne meldingsmail zouden overbodig
+  zijn. Geboortedatum is hier optioneel (in tegenstelling tot de
+  klant-widget). Ook hier kan een cadeaubon-code ingevuld worden.
+  - **"Enkel reserveren"** (checkbox in hetzelfde scherm, `reserveOnly`):
+    voor een boeking die vaak nog wijzigt (groepsgrootte, annulatie, ...) en
+    dus nog niet definitief is — er is en blijft **geen Mollie-koppeling**
+    voor manuele boekingen, maar met deze optie wordt de boeking ook nog
+    niet als "betaald" geregistreerd. Er gebeurt dan nog **niets**
+    onomkeerbaars: geen Billit-factuur, en gebruikte je een cadeaubon, dan
+    wordt het saldo nog niet afgeschreven (`gift_card_amount` wordt wel al
+    onthouden op de boeking, exact hetzelfde deferred-patroon als bij een
+    online boeking met gedeeltelijke cadeaubon-dekking). Een gereserveerde
+    boeking is herkenbaar in de weekagenda (gestreepte rand, "· reservering"
+    label) en klikbaar — dat opent een klein venster om de boeking alsnog te
+    bevestigen (met de effectieve betaalwijze), waarna pas de Billit-factuur
+    en de cadeaubon-afschrijving gebeuren (`lib/store-sql.js:
+    confirmManualBooking()`, `/api/admin/confirm-booking`). Nog steeds
+    bewust geen bevestigingsmail op dat moment.
+- **Extra sessie toevoegen** (`/backend` + `/api/admin/extra-session`, logica
+  in `lib/store-sql.js: addExtraSession()`): een eenmalig extra tijdstip
+  buiten het vaste uurrooster (`recurrence_rules`) om — bv. Fluid Art zit een
+  week volzet, en je plant een extra sessie de week erna. Verschijnt meteen
+  als boekbaar tijdstip in de klant-widget. `recurrence_rule_id` blijft NULL
+  (dat voorzag het schema al expliciet als "handmatig/eenmalig
+  toegevoegd"). Voorkomt dubbels op exact hetzelfde tijdstip.
+- **Room-sluitingen** (`/backend` + `/api/admin/close-room`, logica in
+  `lib/store-sql.js: closeRoom()`): een individuele room of alle rooms
+  sluiten voor een specifiek tijdstip of de volledige dag, weggeschreven als
+  `room_bookings` met `block_type = 'closed'`. Een room met een bestaande
+  klantboeking wordt nooit overschreven (`ON CONFLICT DO NOTHING` op
+  session+room) — getest door te proberen een al-beboekte room te sluiten:
+  de boeking blijft ongemoeid staan.
 - **Weekagenda in kalendervorm** (`/backend`): een Google Agenda-achtig
   weekoverzicht met echte data uit `/api/admin/sessions`, inclusief
   rolwissel admin/gast (gast ziet privé-items enkel als "Bezet"/"Privé").
@@ -100,6 +135,44 @@ licht gekomen en gefixt (zie diezelfde sectie).
   zie `.env.example`) en faalt nooit de betaling zelf: lukt de
   factuuraanroep niet, dan wordt dit enkel gelogd zodat het later manueel
   of via een retry hersteld kan worden.
+- **Bevestigingsmail** (`lib/email.js`): zodra een boeking online betaald is
+  via Mollie, gaat er een bevestigingsmail naar de klant én een interne
+  meldingsmail (incl. de notitie van de klant) naar `NOTIFY_EMAIL`.
+  Verstuurd via Gmail's eigen SMTP-server met een app-wachtwoord (geen
+  aparte e-maildienst nodig) — zie `.env.example` voor hoe je dat aanmaakt.
+  Zonder `GMAIL_USER`/`GMAIL_APP_PASSWORD` wordt enkel naar de console
+  gelogd, net als bij Mollie en Billit. **Bewust niet** bij een manuele
+  boeking (zie hieronder) — daar heeft het team de klant al rechtstreeks
+  gesproken.
+- **Cadeaubonnen** — volledig eigen systeem (bewust NIET gekoppeld aan de Wix
+  Gift Cards API): bruikbaar voor élke workshop, voor een zelfgekozen bedrag.
+  - *Klant koopt online* (`/widget/cadeaubon` + `/api/gift-cards/purchase`):
+    kiest een bedrag (€5–€500, met 4 vaste suggesties of een vrij bedrag),
+    betaalt via Mollie; de code zelf wordt pas aangemaakt zodra de betaling
+    bevestigd wordt (Mollie-webhook, zie `fulfillGiftCardPurchase()` in
+    `lib/store-sql.js`) en meteen naar de koper gemaild (`lib/email.js:
+    sendGiftCardCode()`). Standaard 1 jaar geldig.
+  - *Gebruiken bij een boeking*: een extra veld "Cadeaubon-code" in de
+    klant-widget (en in het manuele-boeking-scherm in `/backend`, voor
+    telefonische boekingen). Dekt de bon het volledige bedrag, dan wordt de
+    boeking meteen bevestigd zonder Mollie; is er een restbedrag, dan gaat
+    dat via de gewone Mollie-checkout. Het effectief afschrijven van het
+    saldo gebeurt bewust pas zodra de betaling (van het eventuele restbedrag)
+    écht bevestigd is — zelfde deferred-pattern als de bevestigingsmail en
+    Billit-factuur hierboven, met een idempotentie-guard
+    (`gift_card_redeemed_at`) tegen een dubbele afschrijving bij een
+    herhaalde webhook-aanroep.
+  - *Backoffice-beheer* (`/backend` → knop "Cadeaubonnen"): zoeken op code,
+    naam of e-mail, manueel een nieuwe bon aanmaken (bv. cash verkocht), en
+    activeren/uitschakelen. Een opgebruikte bon (`status = 'depleted'`) kan
+    niet meer geactiveerd worden.
+  - *Import van de bestaande bonnen* (`db/import-gift-cards.sql`): de 355
+    bestaande cadeaubonnen (91 uit Wix, 264 uit FareHarbor — bewust **niet**
+    samengevoegd, dit zijn en blijven twee gescheiden bronsystemen) zijn
+    omgezet naar één `INSERT ... ON CONFLICT (code) DO NOTHING`-script. Voer
+    dit **eenmalig** uit tegen je database, net zoals `schema.sql`/`seed.sql`
+    (zie "Cadeaubonnen importeren" hieronder) — bevat echte klantgegevens,
+    dus **niet publiek delen of naar een publieke Git-repo pushen**.
 - **Wekelijkse verzamelfactuur** (`lib/store-sql.js: generateWeeklyRevenueInvoice()`
   + `POST /api/admin/weekly-invoice`): telt per week de omzet van betaalde
   boekingen op die NIET al individueel gefactureerd werden
@@ -149,44 +222,55 @@ dat het uurrooster (recurrence_rules) niet correct herkend werd. Gefixt door
 overal lokale getters te gebruiken (zoals `toISODate()` al deed), en
 opnieuw geverifieerd tegen zowel een echte Postgres als pg-mem.
 
+De volledige cadeaubon-functionaliteit is op dezelfde manier end-to-end
+getest tegen een echte, lokale PostgreSQL-instantie: het schema (met de
+`gift_cards`-tabel en de nieuwe kolommen op `bookings`), de import van de 355
+bestaande bonnen, volledige dekking van een boeking (meteen bevestigd, geen
+Mollie nodig), gedeeltelijke dekking (rest via Mollie, saldo pas afgeschreven
+na bevestigde betaling — met een idempotentie-test tegen een dubbele
+webhook-aanroep), een opgebruikte of uitgeschakelde bon die geweigerd wordt,
+zoeken op code/naam/e-mail, en de volledige online-aankoopflow (Mollie-
+betaling → code genereren → mailen), eveneens idempotent getest.
+
+De "enkel reserveren"-optie bij manuele boekingen is apart en volledig
+getest tegen dezelfde echte PostgreSQL-instantie: een reservering blijft
+`payment_status = 'pending'` (geen Billit-factuur, geen cadeaubon-
+afschrijving) tot ze expliciet bevestigd wordt; bevestigen van een
+niet-bestaande of een online (niet-backoffice) boeking wordt geweigerd;
+een tweede keer bevestigen van een al-betaalde reservering is een veilige
+no-op; en een cadeaubon gekoppeld aan een reservering wordt pas afgeschreven
+bij de effectieve bevestiging, niet bij het aanmaken van de reservering.
+
 ## Wat hier bewust NOG NIET in zit
 
-Dit is een **bouwbasis**, geen productieklare applicatie. Voor de livegang
-(zie ook `Stappenplan-Livegang-Boekingssysteem.docx`) moet nog het volgende
-gebeuren:
+Dit is een **bouwbasis**, geen productieklare applicatie. Ondertussen al
+afgerond: hosting (Vercel) + een echte database (Neon), de Mollie-webhook
+(bevestigd met een echte test-betaling), de bevestigingsmail, manuele
+boekingen, en het room-sluiting-scherm. Voor de livegang (zie ook
+`Stappenplan-Livegang-Boekingssysteem.docx`) moet nog het volgende gebeuren:
 
-1. **Echte PostgreSQL-database + hosting.** Lokaal draait alles nog op
-   pg-mem (in-memory, verdwijnt bij herstart — prima om te testen, niet voor
-   productie). Zie "Hosting en een echte database" hieronder voor de
-   concrete stappen (Neon/Supabase + Vercel) — dit is de eerstvolgende stap.
-2. **Mollie — webhook nog niet in het echt gezien.** Je test-sleutel staat
-   klaar en de koppeling is grondig getest (zie hierboven), maar Mollie kan
-   niet naar `localhost` webhooken — dat kan pas écht getest worden zodra de
-   app publiek bereikbaar is (via hosting, zie hieronder, of ngrok).
-3. **Billit — scheduling.** Zowel de factuur per boeking als de wekelijkse
+1. **Billit — scheduling.** Zowel de factuur per boeking als de wekelijkse
    verzamelfactuur zijn gebouwd en getest. Wat nog ontbreekt: een
    automatische, terugkerende trigger voor `/api/admin/weekly-invoice` —
    nu moet dit endpoint nog manueel (of via een externe scheduler)
    aangeroepen worden. Zie "Wekelijkse verzamelfactuur inplannen" hieronder.
-4. **Wix-koppelingen.** Cadeaubonnen (Wix Gift Cards), loyaltypunten (Wix
-   Members/Loyalty Program) en de migratie van bestaande boekingen (Wix
-   Bookings API) staan nog als TODO in de code.
-5. **E-mail.** De bevestigingsmail (incl. notitie) naar
-   info.atelierdoen@gmail.com is nog niet aangesloten — zie de TODO's in
-   `pages/api/mollie-webhook.js`.
-6. **Authenticatie.** De rolwissel admin/gast in `/backend` is nu een
+   **Dit staat nog steeds open — zie de herinnering onderaan dit document.**
+2. **Overige Wix-koppelingen.** Cadeaubonnen zijn ondertussen volledig
+   afgerond als eigen (niet-Wix-gebonden) systeem, zie hierboven. Nog wel als
+   TODO: loyaltypunten (Wix Members/Loyalty Program) en de migratie van
+   bestaande boekingen (Wix Bookings API).
+3. **Authenticatie.** De rolwissel admin/gast in `/backend` is nu een
    simpele knop zonder login — er is nog geen echte gebruikersauthenticatie
    per medewerker (tabel `staff_users` bestaat al in het schema).
-7. **Room-sluiting-scherm.** De logica (`closeRoom()`) bestaat, maar nog
-   geen knop/scherm in `/backend` om dit te bedienen.
-8. **Transacties/race conditions.** De roomtoewijzing bij het boeken
+4. **Transacties/race conditions.** De roomtoewijzing bij het boeken
    gebeurt nu als een reeks losse queries, niet in een DB-transactie — bij
    gelijktijdige boekingen op exact hetzelfde tijdslot kan dat in zeldzame
    gevallen tot een dubbele toewijzing leiden. Voor productie: wrap
    `createBooking()` in een transactie met een row-lock op de sessie.
-9. **Hosting.** Voor de Wix-embed is HTTPS-hosting nodig (bv. Vercel) —
-   `next.config.js` staat al klaar om in een iframe geladen te worden
-   (`X-Frame-Options: ALLOWALL` op de `/widget`-route).
+5. **Vercel Hobby is niet toegestaan voor commercieel gebruik.** Zodra dit
+   echt live gaat met betalende klanten, is een Vercel Pro-abonnement nodig
+   (zie eerdere toelichting) — de gratis laag mag daar niet voor gebruikt
+   worden.
 
 ## Billit sandbox testen
 
@@ -312,6 +396,37 @@ curl -X POST "http://localhost:3000/api/mollie-webhook" \
   --data-urlencode "id=<een payment-ID uit je eigen test-checkout>"
 ```
 
+## E-mail testen
+
+De bevestigingsmail gebruikt Gmail's eigen SMTP-server met een
+"app-wachtwoord" — geen aparte e-maildienst nodig. Aanmaken:
+
+1. Zorg dat 2-stapsverificatie aanstaat op het Gmail-account dat moet
+   versturen (Google Account > Beveiliging).
+2. Ga naar <https://myaccount.google.com/apppasswords>, maak een nieuw
+   app-wachtwoord aan (naam mag vrij gekozen worden, bv. "Boekingssysteem").
+3. Zet in `.env.local` (spaties uit de 16-tekens-code weglaten):
+
+```
+GMAIL_USER=info.atelierdoen@gmail.com
+GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
+```
+
+Zonder deze twee variabelen wordt enkel naar de console gelogd (`[email
+mock] ...`) — handig om lokaal te testen zonder echte mails te versturen.
+Met een echt app-wachtwoord verstuurt de app zowel de klantbevestiging als
+de interne meldingsmail (naar `NOTIFY_EMAIL`, incl. de notitie van de
+klant) meteen zodra een boeking online betaald wordt via de klant-widget
+(Mollie-webhook). Bewust niet bij een manuele boeking in `/backend` — zie
+hierboven.
+
+Getest: het correcte gebruik van de mock-modus (beide mails met correcte
+inhoud gelogd), en — met het echte app-wachtwoord dat je gaf — bevestigd dat
+de app effectief een SMTP-verbinding met `smtp.gmail.com` probeert op te
+zetten met de juiste inloggegevens. Een volledige verzending kon ik hier
+niet afronden (geen internettoegang in deze sandbox, net als bij Mollie en
+Billit) — dat kan je zelf meteen zien werken zodra dit op Vercel staat.
+
 ## Wekelijkse verzamelfactuur testen en inplannen
 
 Test de logica los van de kalender met een curl (past werkende `week`-datum
@@ -346,12 +461,63 @@ terug op "7 dagen geleden"). Draai je niet op Vercel: elke cronjob of
 scheduler die een POST-request kan sturen (bv. een cron-taak op een VPS met
 `curl`, of een externe dienst zoals cron-job.org) volstaat evengoed.
 
+## Stijl aanpassen (kleur, lettertype)
+
+De kleuren (donkere achtergrond, accentkleur, ...) staan allemaal centraal in
+`styles/globals.css` als CSS-variabelen (`--accent`, `--paper`, `--panel`,
+...) — één regel aanpassen volstaat, de rest van de app gebruikt overal
+dezelfde variabele. De accentkleur is ondertussen aangepast naar een warme
+terracotta (`#C1653A`, was roze), en het lettertype naar
+[Quicksand](https://fonts.google.com/specimen/Quicksand) (Google Fonts,
+geladen via `pages/_document.js`) i.p.v. de standaard systeemfont.
+
+## Prijzen aanpassen op een bestaande database
+
+`db/seed.sql` is bewust idempotent (`ON CONFLICT DO NOTHING`) — handig om
+veilig te herhalen, maar dat betekent ook dat een prijswijziging daarin
+**niet** doorwerkt op een database die al gezaaid is (zoals je Neon-database
+nu). Voor een reeds bestaande database moet je de prijs zelf aanpassen, bv.
+via Neon's SQL Editor:
+
+```sql
+UPDATE services SET price = 60.00 WHERE name = 'Fluid Art';
+```
+
+Voor de prijstrap van Art Attack Room (per groepsgrootte) zou dat zijn:
+
+```sql
+UPDATE service_party_pricing spp
+SET total_price = 999
+FROM services s
+WHERE spp.service_id = s.id AND s.name = 'Art Attack Room' AND spp.party_size = 4; -- pas party_size en bedrag aan
+```
+
+## Cadeaubonnen importeren
+
+`db/import-gift-cards.sql` bevat de 355 bestaande cadeaubonnen (91 uit Wix,
+264 uit FareHarbor) als één `INSERT ... ON CONFLICT (code) DO NOTHING`-script
+— bewust **niet** samengevoegd tot één lijst: het zijn en blijven twee
+gescheiden bronsystemen (`source = 'imported_wix'` / `'imported_fareharbor'`
+in de `gift_cards`-tabel), zodat je in de backoffice altijd kan zien uit
+welk systeem een bon oorspronkelijk komt.
+
+Voer dit **eenmalig** uit tegen je database, ná `schema.sql` en `seed.sql`
+(bv. via Neon's SQL Editor, of `psql "$DATABASE_URL" -f db/import-gift-cards.sql`).
+Het script is idempotent (`ON CONFLICT DO NOTHING`), dus per ongeluk twee keer
+uitvoeren doet geen kwaad. **Let op:** dit bestand bevat echte klantgegevens
+(namen, e-mailadressen) — niet naar een publieke Git-repo pushen.
+
+Getest (via een echte, lokale PostgreSQL-instantie, niet enkel pg-mem): alle
+355 rijen worden correct geïmporteerd, zonder dubbele codes, met de juiste
+status (actief/uitgeschakeld/opgebruikt) afgeleid uit de brondata.
+
 ## Projectstructuur
 
 ```
 db/
-  schema.sql        kopie van schema-boekingssysteem.sql (bron van waarheid)
-  seed.sql          referentiedata: rooms, diensten, prijstrap, uurrooster
+  schema.sql               kopie van schema-boekingssysteem.sql (bron van waarheid)
+  seed.sql                 referentiedata: rooms, diensten, prijstrap, uurrooster
+  import-gift-cards.sql    eenmalige import van de 355 bestaande cadeaubonnen (Wix + FareHarbor)
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
   store-sql.js       de echte, SQL-gebaseerde implementatie (in gebruik door de API)
@@ -362,10 +528,22 @@ lib/
   dateUtils.js       datumhelpers (bewust zonder toISOString/UTC-bugs)
   mollie.js          Mollie-wrapper (mock zonder API-key, echte @mollie/api-client mét)
   billit.js          Billit-koppeling: factuur per boeking (ApiKey + PartyID auth)
+  email.js           Bevestigingsmail + cadeaubon-mail via Gmail SMTP (mock zonder app-wachtwoord)
 pages/
-  widget.js               klant-boekingswidget
-  widget/bevestiging.js   pagina na (mock-)betaling
-  backend/index.js        admin weekagenda + persoonlijke afspraken
+  widget.js                       klant-boekingswidget (incl. cadeaubon-code invullen)
+  widget/bevestiging.js           pagina na (mock-)betaling van een boeking
+  widget/cadeaubon.js             cadeaubon kopen (bedrag kiezen + Mollie-checkout)
+  widget/cadeaubon-bevestiging.js pagina na (mock-)betaling van een cadeaubon-aankoop
+  backend/index.js        admin weekagenda, persoonlijke afspraken, manuele
+                          boekingen, room-sluitingen, cadeaubonnen-beheer
   api/                     alle API-routes, gebruiken lib/store-sql.js
+  api/admin/manual-booking.js       boeking die het team zelf ingeeft (geen Mollie, evt. reserveOnly)
+  api/admin/confirm-booking.js      een eerdere reservering alsnog bevestigen (betaald + factuur/cadeaubon)
+  api/admin/close-room.js           room(s) sluiten voor een tijdslot of hele dag
+  api/admin/rooms.js                roomlijst (voor het room-sluiten-scherm)
+  api/admin/extra-session.js        eenmalige extra sessie buiten het uurrooster
+  api/admin/gift-cards.js           cadeaubonnen zoeken (GET) / manueel aanmaken (POST)
+  api/admin/gift-cards/[id].js      cadeaubon activeren/uitschakelen (PATCH)
+  api/gift-cards/purchase.js        klant koopt een cadeaubon (Mollie-checkout aanmaken)
 vercel.json          cronjob-config voor de wekelijkse verzamelfactuur (Vercel-hosting)
 ```

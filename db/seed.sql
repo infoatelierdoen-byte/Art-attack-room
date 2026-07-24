@@ -10,7 +10,7 @@ ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO services (name, type, duration_minutes, buffer_minutes, price, default_capacity, uses_room_assignment, min_online_party_size, max_online_party_size)
 VALUES
-  ('Fluid Art', 'group_session', 90, 60, 45.00, 10, FALSE, 1, 5),
+  ('Fluid Art', 'group_session', 90, 60, 60.00, 10, FALSE, 1, 5),
   ('Art Attack Room', 'group_session', 90, 60, NULL, 7, TRUE, 2, 7)
 ON CONFLICT DO NOTHING;
 

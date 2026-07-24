@@ -13,6 +13,7 @@
     "react-dom": "18.3.1",
     "pg": "8.22.0",
     "pg-mem": "3.0.14",
-    "@mollie/api-client": "4.6.0"
+    "@mollie/api-client": "4.6.0",
+    "nodemailer": "6.9.14"
   }
 }

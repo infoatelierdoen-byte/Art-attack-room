@@ -1,7 +1,7 @@
 :root {
   --paper: #1C1C1F;
   --panel: #26262B;
-  --accent: #E8395C;
+  --accent: #C1653A;
   --text: #F4F1EC;
   --muted: #A8A39A;
   --line: #37373D;
@@ -19,7 +19,7 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: "Quicksand", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--text);
   background: var(--paper);
 }

@@ -51,7 +51,8 @@ export default function Widget() {
   const [form, setForm] = useState({
     name: "", email: "", phone: "", birthDate: "", note: "",
     termsAccepted: false, marketingOptIn: true,
-    invoiceRequested: false, vatNumber: "", companyName: ""
+    invoiceRequested: false, vatNumber: "", companyName: "",
+    giftCardCode: ""
   });
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
@@ -107,7 +108,8 @@ export default function Widget() {
           termsAccepted: form.termsAccepted,
           marketingOptIn: form.marketingOptIn,
           invoiceRequested: form.invoiceRequested,
-          invoiceDetails: form.invoiceRequested ? { vatNumber: form.vatNumber, companyName: form.companyName } : null
+          invoiceDetails: form.invoiceRequested ? { vatNumber: form.vatNumber, companyName: form.companyName } : null,
+          giftCardCode: form.giftCardCode.trim() || null
         })
       });
       const data = await res.json();
@@ -141,15 +143,24 @@ export default function Widget() {
     return (
       <div style={styles.wrap}>
         <div style={styles.card}>
-          <h2 style={{ color: "var(--accent)" }}>Bijna klaar!</h2>
-          <p>Je reservatie is aangemaakt. Rond de betaling af om ze te bevestigen.</p>
-          <p style={{ fontWeight: 700 }}>Te betalen: €{result.amountDue.toFixed(2)}</p>
-          {result.mocked && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>
-              (Dev-modus: er is geen echte Mollie-key ingesteld, dit is een mock-checkout-link.)
-            </p>
+          {result.coveredByGiftCard ? (
+            <>
+              <h2 style={{ color: "var(--accent)" }}>Boeking bevestigd!</h2>
+              <p>Je cadeaubon dekte het volledige bedrag — je reservatie is meteen bevestigd. Je ontvangt zo een bevestigingsmail.</p>
+            </>
+          ) : (
+            <>
+              <h2 style={{ color: "var(--accent)" }}>Bijna klaar!</h2>
+              <p>Je reservatie is aangemaakt. Rond de betaling af om ze te bevestigen.</p>
+              <p style={{ fontWeight: 700 }}>Te betalen: €{result.amountDue.toFixed(2)}</p>
+              {result.mocked && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                  (Dev-modus: er is geen echte Mollie-key ingesteld, dit is een mock-checkout-link.)
+                </p>
+              )}
+              <a href={result.checkoutUrl} style={styles.primaryBtn}>Naar betaling</a>
+            </>
           )}
-          <a href={result.checkoutUrl} style={styles.primaryBtn}>Naar betaling</a>
         </div>
       </div>
     );
@@ -159,6 +170,9 @@ export default function Widget() {
     <div style={styles.wrap}>
       <div style={styles.card}>
         <h1 style={styles.h1}>Boek je workshop</h1>
+        <p style={{ ...styles.note, marginTop: -8, marginBottom: 16 }}>
+          Iemand verrassen? <a href="/widget/cadeaubon" style={{ color: "var(--accent)" }}>Koop een cadeaubon</a>.
+        </p>
 
         <div style={styles.tabs}>
           {services.map(s => (
@@ -260,6 +274,9 @@ export default function Widget() {
                   onChange={e => setForm({ ...form, birthDate: e.target.value })} style={styles.input} />
                 <textarea placeholder="Notitie (optioneel)" value={form.note}
                   onChange={e => setForm({ ...form, note: e.target.value })} style={{ ...styles.input, minHeight: 60 }} />
+
+                <input placeholder="Cadeaubon-code (optioneel)" value={form.giftCardCode}
+                  onChange={e => setForm({ ...form, giftCardCode: e.target.value })} style={styles.input} />
 
                 <label style={styles.checkboxRow}>
                   <input type="checkbox" checked={form.invoiceRequested}
