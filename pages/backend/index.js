@@ -4,6 +4,10 @@ const HOUR_START = 9;
 const HOUR_END = 22;
 const HOUR_PX = 44;
 const DAY_LABELS = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"];
+const MONTHS_NL = [
+  "januari", "februari", "maart", "april", "mei", "juni",
+  "juli", "augustus", "september", "oktober", "november", "december"
+];
 
 // Bewust GEEN toISOString() — dat rekent om naar UTC en verschuift de datum
 // met een dag t.o.v. de lokale (Europe/Brussels) kalenderdatum.
@@ -21,6 +25,22 @@ function mondayOf(dateISO) {
   const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   return toISO(addDays(d, diff));
+}
+
+// Volledige 6-weken kalendergrid (42 dagen, maandag-gebaseerd) voor de
+// mini-maandkalender in de zijbalk — incl. de grijze dagen van de vorige/
+// volgende maand die de rand opvullen, zoals in Google Agenda.
+function buildFullMonthGrid(year, month) {
+  const first = new Date(year, month, 1);
+  const firstWeekday = (first.getDay() + 6) % 7; // 0 = maandag
+  const start = new Date(year, month, 1 - firstWeekday);
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    cells.push({ date: d, inMonth: d.getMonth() === month });
+  }
+  return cells;
 }
 
 function timeToMinutes(hhmm) {
@@ -61,6 +81,8 @@ export default function Backend() {
 
   const [monday, setMonday] = useState(() => mondayOf(toISO(new Date())));
   const [events, setEvents] = useState([]);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
+  const [pickerMonth, setPickerMonth] = useState(() => new Date().getMonth());
   const [loading, setLoading] = useState(true);
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
@@ -164,6 +186,34 @@ export default function Backend() {
   function shiftWeek(n) {
     load(toISO(addDays(parseISO(monday), n * 7)));
   }
+
+  // --- Mini-maandkalender in de zijbalk ---
+
+  // Volgt de huidig getoonde week: navigeer je via de week-knoppen of
+  // "vandaag", dan springt de mini-kalender automatisch mee naar die maand.
+  useEffect(() => {
+    const d = parseISO(monday);
+    setPickerYear(d.getFullYear());
+    setPickerMonth(d.getMonth());
+  }, [monday]);
+
+  // Los van de week-navigatie kan je in de mini-kalender ook zelf verder
+  // bladeren (bv. vooruitkijken) zonder dat de hoofdweergave meteen meespringt
+  // — pas een klik op een dag springt naar die week.
+  function shiftPickerMonth(n) {
+    let m = pickerMonth + n;
+    let y = pickerYear;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setPickerMonth(m);
+    setPickerYear(y);
+  }
+
+  function pickDate(date) {
+    load(mondayOf(toISO(date)));
+  }
+
+  const pickerGrid = useMemo(() => buildFullMonthGrid(pickerYear, pickerMonth), [pickerYear, pickerMonth]);
 
   async function submitPersonal(e) {
     e.preventDefault();
@@ -491,65 +541,95 @@ export default function Backend() {
         </div>
       </header>
 
-      <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <button className="nav-btn" onClick={() => shiftWeek(-1)}>‹ vorige week</button>
-        <span style={{ fontWeight: 700 }}>
-          week van {weekDays[0].toLocaleDateString("nl-BE", { day: "2-digit", month: "long" })}
-        </span>
-        <button className="nav-btn" onClick={() => shiftWeek(1)}>volgende week ›</button>
-        <button className="nav-btn" onClick={() => load(mondayOf(toISO(new Date())))}>vandaag</button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button className="add-btn secondary" onClick={openGiftCards}>Cadeaubonnen</button>
-          <button className="add-btn secondary" onClick={openCloseRoom}>+ Room(s) sluiten</button>
-          <button className="add-btn secondary" onClick={() => setShowAddPersonal(true)}>+ Persoonlijke afspraak</button>
-          <button className="add-btn secondary" onClick={openAddExtra}>+ Extra sessie</button>
-          <button className="add-btn" onClick={openAddBooking}>+ Boeking toevoegen</button>
-        </div>
-      </div>
-
-      {loading ? (
-        <p style={{ padding: 20 }}>Laden…</p>
-      ) : (
-        <div className="week-body">
-          <div className="week-time-col">
-            {Array.from({ length: HOUR_END - HOUR_START + 1 }, (_, i) => (
-              <div key={i} className="hour-label">{HOUR_START + i}:00</div>
-            ))}
+      <div style={{ display: "flex" }}>
+        <aside className="sidebar">
+          <div className="mini-cal-header">
+            <button type="button" className="mini-nav-btn" onClick={() => shiftPickerMonth(-1)}>‹</button>
+            <span className="mini-cal-title">{MONTHS_NL[pickerMonth]} {pickerYear}</span>
+            <button type="button" className="mini-nav-btn" onClick={() => shiftPickerMonth(1)}>›</button>
           </div>
-          <div className="week-days">
-            {weekDays.map((d, i) => {
-              const dISO = toISO(d);
-              const dayEvents = events.filter(e => e.dateISO === dISO);
+          <div className="mini-cal-grid">
+            {DAY_LABELS.map(w => <div key={w} className="mini-cal-dow">{w}</div>)}
+            {pickerGrid.map((cell, i) => {
+              const dISO = toISO(cell.date);
+              const isToday = dISO === toISO(new Date());
+              const inSelectedWeek = weekDays.some(d => toISO(d) === dISO);
+              let cls = "mini-cal-day";
+              if (!cell.inMonth) cls += " outside";
+              if (isToday) cls += " today";
+              else if (inSelectedWeek) cls += " in-week";
               return (
-                <div key={i} className="week-day-col">
-                  <div className="week-day-head">{DAY_LABELS[i]} {d.getDate()}</div>
-                  <div className="week-day-body" style={{ height: (HOUR_END - HOUR_START) * HOUR_PX }}>
-                    {dayEvents.map((ev, idx) => {
-                      const startMin = timeToMinutes(ev.start);
-                      const endMin = ev.kind === "personal" ? timeToMinutes(ev.end) : startMin + (ev.durationMin || 90);
-                      const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
-                      const height = ((endMin - startMin) / 60) * HOUR_PX;
-                      const v = eventVisual(ev);
-                      return (
-                        <div
-                          key={idx}
-                          className={`cal-event ${v.cls}${ev.pendingConfirmation ? " clickable" : ""}`}
-                          style={{ top, height }}
-                          onClick={ev.pendingConfirmation ? () => openConfirmBooking(ev) : undefined}
-                          title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
-                        >
-                          <div className="cal-event-label">{v.label}</div>
-                          {v.sub && <div className="cal-event-sub">{v.sub}</div>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <button type="button" key={i} className={cls} onClick={() => pickDate(cell.date)}>
+                  {cell.date.getDate()}
+                </button>
               );
             })}
           </div>
-        </div>
-      )}
+        </aside>
+
+        <main style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button className="nav-btn" onClick={() => shiftWeek(-1)}>‹ vorige week</button>
+            <span style={{ fontWeight: 700 }}>
+              week van {weekDays[0].toLocaleDateString("nl-BE", { day: "2-digit", month: "long" })}
+            </span>
+            <button className="nav-btn" onClick={() => shiftWeek(1)}>volgende week ›</button>
+            <button className="nav-btn" onClick={() => load(mondayOf(toISO(new Date())))}>vandaag</button>
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button className="add-btn secondary" onClick={openGiftCards}>Cadeaubonnen</button>
+              <button className="add-btn secondary" onClick={openCloseRoom}>+ Room(s) sluiten</button>
+              <button className="add-btn secondary" onClick={() => setShowAddPersonal(true)}>+ Persoonlijke afspraak</button>
+              <button className="add-btn secondary" onClick={openAddExtra}>+ Extra sessie</button>
+              <button className="add-btn" onClick={openAddBooking}>+ Boeking toevoegen</button>
+            </div>
+          </div>
+
+          {loading ? (
+            <p style={{ padding: 20 }}>Laden…</p>
+          ) : (
+            <div className="week-body">
+              <div className="week-time-col">
+                {Array.from({ length: HOUR_END - HOUR_START + 1 }, (_, i) => (
+                  <div key={i} className="hour-label">{HOUR_START + i}:00</div>
+                ))}
+              </div>
+              <div className="week-days">
+                {weekDays.map((d, i) => {
+                  const dISO = toISO(d);
+                  const dayEvents = events.filter(e => e.dateISO === dISO);
+                  return (
+                    <div key={i} className="week-day-col">
+                      <div className="week-day-head">{DAY_LABELS[i]} {d.getDate()}</div>
+                      <div className="week-day-body" style={{ height: (HOUR_END - HOUR_START) * HOUR_PX }}>
+                        {dayEvents.map((ev, idx) => {
+                          const startMin = timeToMinutes(ev.start);
+                          const endMin = ev.kind === "personal" ? timeToMinutes(ev.end) : startMin + (ev.durationMin || 90);
+                          const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
+                          const height = ((endMin - startMin) / 60) * HOUR_PX;
+                          const v = eventVisual(ev);
+                          return (
+                            <div
+                              key={idx}
+                              className={`cal-event ${v.cls}${ev.pendingConfirmation ? " clickable" : ""}`}
+                              style={{ top, height }}
+                              onClick={ev.pendingConfirmation ? () => openConfirmBooking(ev) : undefined}
+                              title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
+                            >
+                              <div className="cal-event-label">{v.label}</div>
+                              {v.sub && <div className="cal-event-sub">{v.sub}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
 
       {showAddPersonal && (
         <div className="modal-backdrop" onClick={() => setShowAddPersonal(false)}>
@@ -910,6 +990,17 @@ const css = `
   .add-btn { padding: 8px 14px; border-radius: 8px; border: none; background: var(--admin-accent); color: #fff; font-weight: 700; }
   .add-btn.secondary { background: #fff; color: var(--admin-accent); border: 1px solid var(--admin-accent); }
   .add-btn:disabled { opacity: 0.5; }
+  .sidebar { width: 216px; flex-shrink: 0; padding: 18px 16px; border-right: 1px solid var(--admin-line); }
+  .mini-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .mini-cal-title { font-weight: 700; font-size: 14px; }
+  .mini-nav-btn { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--admin-line); background: #fff; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+  .mini-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .mini-cal-dow { text-align: center; font-size: 10px; color: #7C7668; padding: 4px 0; }
+  .mini-cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: transparent; font-size: 12px; color: #20221F; padding: 0; }
+  .mini-cal-day:hover { background: #F1EEE7; }
+  .mini-cal-day.outside { color: #C7C2B6; }
+  .mini-cal-day.in-week { background: #FBE9E1; }
+  .mini-cal-day.today { background: var(--admin-accent); color: #fff; font-weight: 700; }
   .week-body { display: flex; padding: 0 20px 40px; gap: 0; }
   .week-time-col { width: 56px; padding-top: 34px; }
   .hour-label { height: ${HOUR_PX}px; font-size: 11px; color: #7C7668; }
