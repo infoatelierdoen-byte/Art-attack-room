@@ -30,6 +30,35 @@ function buildMonthGrid(year, month) {
   return cells;
 }
 
+// Handgetekende cadeaubon-illustratie (geen echte foto — er is momenteel geen
+// AI-beeldgeneratie beschikbaar). Vervang gerust door een echte foto/AI-beeld:
+// gewoon de <GiftTileArt /> hieronder verwijderen en een <img> in de
+// .abr-tile-bg-gift div zetten, zie ook de andere twee tegels (Foto volgt).
+function GiftTileArt() {
+  return (
+    <svg viewBox="0 0 400 600" preserveAspectRatio="xMidYMid slice" style={{ width: "100%", height: "100%", display: "block" }}>
+      <defs>
+        <radialGradient id="giftBg" cx="50%" cy="38%" r="75%">
+          <stop offset="0%" stopColor="#3A2A22" />
+          <stop offset="100%" stopColor="#1C1C1F" />
+        </radialGradient>
+      </defs>
+      <rect width="400" height="600" fill="url(#giftBg)" />
+      <circle cx="90" cy="120" r="3" fill="#F4E7D8" opacity="0.6" />
+      <circle cx="320" cy="90" r="2.5" fill="#F4E7D8" opacity="0.5" />
+      <circle cx="300" cy="200" r="2" fill="#F4E7D8" opacity="0.4" />
+      <circle cx="70" cy="240" r="2" fill="#F4E7D8" opacity="0.4" />
+      <rect x="110" y="270" width="180" height="150" rx="6" fill="#C1653A" />
+      <rect x="95" y="240" width="210" height="45" rx="6" fill="#D97A4E" />
+      <rect x="185" y="240" width="30" height="180" fill="#F4E7D8" opacity="0.9" />
+      <rect x="95" y="255" width="210" height="16" fill="#F4E7D8" opacity="0.9" />
+      <path d="M200 240 C170 210 140 215 150 245 C160 265 190 250 200 240 Z" fill="#F4E7D8" opacity="0.9" />
+      <path d="M200 240 C230 210 260 215 250 245 C240 265 210 250 200 240 Z" fill="#F4E7D8" opacity="0.9" />
+      <circle cx="200" cy="240" r="9" fill="#C1653A" />
+    </svg>
+  );
+}
+
 export default function Widget() {
   const today = useMemo(() => new Date(), []);
   const maxDate = useMemo(() => {
@@ -37,6 +66,11 @@ export default function Widget() {
     d.setMonth(d.getMonth() + 3);
     return d;
   }, [today]);
+
+  // Enkel relevant op desktop (zie CSS media query hieronder): op mobiel
+  // wordt deze landingspagina met foto-tegels genegeerd en zie je meteen
+  // het boekingsscherm, zoals voorheen — dat pakken we later apart aan.
+  const [desktopLanding, setDesktopLanding] = useState(true);
 
   const [services, setServices] = useState([]);
   const [serviceCode, setServiceCode] = useState("art_attack_room");
@@ -47,6 +81,9 @@ export default function Widget() {
   const [slots, setSlots] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  // ISO-datums (YYYY-MM-DD) binnen de getoonde maand die minstens 1 boekbaar
+  // tijdstip hebben — voor het groen markeren van dagen in de kalender.
+  const [availableDates, setAvailableDates] = useState(new Set());
 
   const [form, setForm] = useState({
     name: "", email: "", phone: "", birthDate: "", note: "",
@@ -78,6 +115,25 @@ export default function Widget() {
     if (currentService.pricingType === "per_person") return currentService.pricePerPerson * partySize;
     return null;
   }, [currentService, partySize]);
+
+  // Prijs PER PERSOON voor naast de stepper (bv. "€60pp" bij 2, "€58pp" bij
+  // 3) — het effectief te betalen totaalbedrag (bv. bij "Bevestig en
+  // betaal") blijft uiteraard gewoon het totaal, niet dit bedrag.
+  const pricePerPerson = useMemo(() => {
+    if (price === null || !partySize) return null;
+    return Math.round(price / partySize);
+  }, [price, partySize]);
+
+  // Welke dagen in de getoonde maand nog boekbaar zijn (groen te markeren) —
+  // hangt af van dienst, groepsgrootte én de getoonde maand, dus opnieuw
+  // opvragen zodra één daarvan verandert.
+  useEffect(() => {
+    if (!serviceCode) return;
+    fetch(`/api/availability-month?service=${serviceCode}&year=${viewYear}&month=${viewMonth}&partySize=${partySize || 1}`)
+      .then(r => r.json())
+      .then(d => setAvailableDates(new Set(d.dates || [])))
+      .catch(() => setAvailableDates(new Set()));
+  }, [serviceCode, viewYear, viewMonth, partySize]);
 
   function selectDate(date) {
     setSelectedDate(date);
@@ -167,28 +223,100 @@ export default function Widget() {
   }
 
   return (
-    <div style={styles.wrap}>
-      <div style={styles.card}>
-        <h1 style={styles.h1}>Boek je workshop</h1>
-        <p style={{ ...styles.note, marginTop: -8, marginBottom: 16 }}>
-          Iemand verrassen? <a href="/widget/cadeaubon" style={{ color: "var(--accent)" }}>Koop een cadeaubon</a>.
-        </p>
+    <div className={`abr-page ${desktopLanding ? "abr-mode-landing" : "abr-mode-booking"}`}>
+      <style>{layoutCss}</style>
 
-        <div style={styles.tabs}>
-          {services.map(s => (
-            <button
-              key={s.code}
-              onClick={() => { setServiceCode(s.code); setSelectedDate(null); setSelectedSlot(null); }}
-              style={{ ...styles.tab, ...(serviceCode === s.code ? styles.tabActive : {}) }}
-            >
-              {s.label}
-            </button>
-          ))}
+      {/* Landingspagina met 3 foto-tegels — enkel zichtbaar op desktop (zie
+          media query in layoutCss). Op mobiel altijd verborgen, daar ga je
+          meteen naar het boekingsscherm hieronder. */}
+      <div className="abr-landing">
+        <div
+          className="abr-tile"
+          role="button" tabIndex={0}
+          onClick={() => { setServiceCode("art_attack_room"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("art_attack_room"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
+        >
+          {/* Plaatshouder — vervang door <img> zodra er een echte foto is. */}
+          <div className="abr-tile-bg abr-tile-bg-attack">
+            <span className="abr-tile-placeholder-label">Foto volgt</span>
+          </div>
+          <div className="abr-tile-overlay">
+            <p className="abr-tile-title">Art Attack Room</p>
+            <p className="abr-tile-sub">Graffiti-ervaring</p>
+          </div>
         </div>
 
-        {currentService && (
-          <>
-            <div style={styles.row}>
+        <div
+          className="abr-tile"
+          role="button" tabIndex={0}
+          onClick={() => { setServiceCode("fluid_art"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("fluid_art"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
+        >
+          {/* Plaatshouder — vervang door <img> zodra er een echte foto is. */}
+          <div className="abr-tile-bg abr-tile-bg-fluid">
+            <span className="abr-tile-placeholder-label">Foto volgt</span>
+          </div>
+          <div className="abr-tile-overlay">
+            <p className="abr-tile-title">Fluid Art</p>
+            <p className="abr-tile-sub">Acrylgieten</p>
+          </div>
+        </div>
+
+        <a className="abr-tile" href="/widget/cadeaubon">
+          <div className="abr-tile-bg abr-tile-bg-gift">
+            <GiftTileArt />
+          </div>
+          <div className="abr-tile-overlay">
+            <p className="abr-tile-title">Cadeaubon</p>
+            <p className="abr-tile-sub">Verras iemand</p>
+          </div>
+        </a>
+      </div>
+
+      <div className="abr-layout">
+        <div className="abr-hero">
+          <button type="button" className="abr-back-link" onClick={() => setDesktopLanding(true)} aria-label="Kies een andere workshop">
+            <span className="abr-back-arrow">‹</span>
+            <span className="abr-back-text">Kies een andere workshop</span>
+          </button>
+          {/* Plaatshouder voor sfeerfoto — vervang de div hieronder later
+              gewoon door <img src="/foto.jpg" alt="..." className="abr-hero-media" />
+              zodra er echte foto's zijn. */}
+          <div className="abr-hero-media">
+            <span className="abr-hero-media-label">Foto volgt</span>
+          </div>
+          {/* Op mobiel: enkel deze titel over de foto, de volledige tekst
+              hieronder (.abr-hero-text) is daar verborgen om de vaste
+              fotostrook compact te houden — zie layoutCss. */}
+          <p className="abr-hero-mobile-title">{currentService?.label || "Boek je workshop"}</p>
+          <div className="abr-hero-text">
+            <h1>Boek je workshop</h1>
+            <p style={{ ...styles.note, marginBottom: 8 }}>
+              Beleef een unieke, creatieve namiddag bij Art Attack Room.
+            </p>
+            <p style={styles.note}>
+              Iemand verrassen? <a href="/widget/cadeaubon" style={{ color: "var(--accent)" }}>Koop een cadeaubon</a>.
+            </p>
+          </div>
+        </div>
+
+        <div className="abr-panel-wrap">
+          <div className="abr-panel">
+            <div style={styles.tabs}>
+              {services.map(s => (
+                <button
+                  key={s.code}
+                  onClick={() => { setServiceCode(s.code); setSelectedDate(null); setSelectedSlot(null); }}
+                  style={{ ...styles.tab, ...(serviceCode === s.code ? styles.tabActive : {}) }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {currentService && (
+              <>
+                <div style={styles.row}>
               <span style={styles.label}>Aantal personen</span>
               <div style={styles.stepper}>
                 <button
@@ -201,7 +329,7 @@ export default function Widget() {
                   onClick={() => setPartySize(Math.min(currentService.maxOnlinePartySize, partySize + 1))}
                 >+</button>
               </div>
-              {price !== null && <span style={styles.price}>€{price}</span>}
+              {pricePerPerson !== null && <span style={styles.price}>€{pricePerPerson}pp</span>}
             </div>
             {serviceCode === "art_attack_room" && (
               <p style={styles.note}>
@@ -221,6 +349,7 @@ export default function Widget() {
                 if (!date) return <div key={i} />;
                 const disabled = isDateDisabled(date);
                 const isSelected = selectedDate && toISO(selectedDate) === toISO(date);
+                const isAvailable = !disabled && availableDates.has(toISO(date));
                 return (
                   <button
                     key={i}
@@ -233,6 +362,7 @@ export default function Widget() {
                     }}
                   >
                     {date.getDate()}
+                    {isAvailable && !isSelected && <span style={styles.calDayDot} />}
                   </button>
                 );
               })}
@@ -245,18 +375,22 @@ export default function Widget() {
                 {!loadingSlots && slots.length === 0 && <p style={{ color: "var(--muted)" }}>Geen sessies op deze dag.</p>}
                 <div style={styles.slotList}>
                   {slots.map(s => (
-                    <button
-                      key={s.start}
-                      disabled={!s.bookable}
-                      onClick={() => setSelectedSlot(s.start)}
-                      style={{
-                        ...styles.slotBtn,
-                        ...(s.bookable ? {} : styles.slotBtnDisabled),
-                        ...(selectedSlot === s.start ? styles.slotBtnSelected : {})
-                      }}
-                    >
-                      {s.start} {s.bookable ? "— Boek nu" : "— volzet"}
-                    </button>
+                    <div key={s.start}>
+                      <button
+                        disabled={!s.bookable}
+                        onClick={() => setSelectedSlot(s.start)}
+                        style={{
+                          ...styles.slotBtn,
+                          ...(s.bookable ? {} : styles.slotBtnDisabled),
+                          ...(selectedSlot === s.start ? styles.slotBtnSelected : {})
+                        }}
+                      >
+                        {s.start} {s.bookable ? "— Boek nu" : "— volzet"}
+                      </button>
+                      {s.bookable && s.roomsLeft === 1 && (
+                        <p style={styles.lastRoomWarning}>Nog 1 room beschikbaar</p>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -310,12 +444,68 @@ export default function Widget() {
                 </button>
               </form>
             )}
-          </>
-        )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
+
+const layoutCss = `
+  /* --- Basis = mobiel (tegels onder elkaar, foto vast bovenaan) --- */
+  .abr-page { min-height: 100vh; width: 100%; }
+
+  .abr-landing { display: flex; flex-direction: column; min-height: 100vh; }
+  .abr-mode-booking .abr-landing { display: none; }
+  .abr-tile { position: relative; flex: 1; display: flex; align-items: flex-end; overflow: hidden; text-decoration: none; cursor: pointer; border: none; }
+  .abr-tile-bg { position: absolute; inset: 0; transition: transform 0.4s ease; }
+  .abr-tile:hover .abr-tile-bg { transform: scale(1.04); }
+  .abr-tile-bg-attack { background: linear-gradient(160deg, #3A2A22, #C1653A); display: flex; align-items: center; justify-content: center; }
+  .abr-tile-bg-fluid { background: linear-gradient(160deg, #1E2A3A, #3D8BFF); display: flex; align-items: center; justify-content: center; }
+  .abr-tile-bg-gift { background: #1C1C1F; }
+  .abr-tile-placeholder-label { color: rgba(255,255,255,0.55); font-size: 13px; border: 1.5px dashed rgba(255,255,255,0.3); padding: 10px 16px; border-radius: 8px; }
+  .abr-tile-overlay { position: relative; z-index: 1; width: 100%; box-sizing: border-box; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 65%); }
+  .abr-tile-title { color: #fff; font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+  .abr-tile-sub { color: rgba(255,255,255,0.78); font-size: 12px; margin: 0; }
+
+  .abr-mode-landing .abr-layout { display: none; }
+  .abr-layout { display: flex; flex-direction: column; }
+
+  /* Vaste fotostrook bovenaan (~38% van het scherm) met titel erover; de
+     volledige tekstblok (.abr-hero-text) is op mobiel verborgen om deze
+     strook compact te houden. Daaronder scrollt het boekingspaneel gewoon. */
+  .abr-hero { position: sticky; top: 0; z-index: 5; height: 38vh; min-height: 210px; padding: 0; overflow: hidden; }
+  .abr-hero-media { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 0; background: linear-gradient(135deg, #2A2A2E, #1C1C1F); display: flex; align-items: center; justify-content: center; }
+  .abr-hero-media-label { color: var(--muted); font-size: 13px; }
+  .abr-hero-mobile-title { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; margin: 0; padding: 16px; font-size: 19px; font-weight: 500; color: #fff; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 70%); }
+  .abr-hero-text { display: none; }
+
+  .abr-back-link { display: none; border: none; }
+  .abr-mode-booking .abr-back-link { position: absolute; top: 14px; left: 14px; z-index: 6; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,0.4); color: #fff; font-size: 18px; padding: 0; }
+  .abr-back-text { display: none; }
+
+  .abr-panel-wrap { display: flex; justify-content: center; padding: 16px 12px 40px; }
+  .abr-panel { width: 100%; max-width: 480px; background: var(--panel); border-radius: 16px; padding: 24px; }
+
+  /* --- Vanaf hier: desktop, zoals eerder afgesproken --- */
+  @media (min-width: 900px) {
+    .abr-landing { flex-direction: row; }
+
+    .abr-layout { flex-direction: row; align-items: stretch; min-height: 100vh; }
+    .abr-hero { position: sticky; top: 0; height: 100vh; min-height: 0; overflow: visible; flex: 1 1 50%; padding: 56px; display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; }
+    .abr-hero-media { position: relative; height: 340px; border-radius: 16px; margin-bottom: 16px; }
+    .abr-hero-mobile-title { display: none; }
+    .abr-hero-text { display: block; }
+    .abr-hero-text h1 { margin: 0 0 8px; font-size: 36px; }
+
+    .abr-mode-booking .abr-back-link { position: static; width: auto; height: auto; border-radius: 0; background: none; color: var(--muted); font-size: 13px; padding: 0; margin-bottom: 14px; }
+    .abr-back-text { display: inline; margin-left: 4px; }
+
+    .abr-panel-wrap { flex: 1 1 50%; padding: 56px; align-items: center; }
+  }
+`;
 
 const styles = {
   wrap: { minHeight: "100vh", display: "flex", justifyContent: "center", padding: "24px 12px" },
@@ -334,13 +524,16 @@ const styles = {
   navBtn: { background: "transparent", border: "1px solid var(--line)", color: "var(--text)", borderRadius: 8, width: 30, height: 30 },
   calGrid: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 },
   calDow: { textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 4 },
-  calDay: { padding: "8px 0", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", color: "var(--text)" },
+  calDay: { position: "relative", padding: "8px 0", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", color: "var(--text)" },
   calDayDisabled: { opacity: 0.25, pointerEvents: "none" },
   calDaySelected: { background: "var(--accent)", borderColor: "var(--accent)", fontWeight: 700 },
+  // Klein groen puntje onderaan een dag met nog beschikbare tijdstippen.
+  calDayDot: { position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 5, height: 5, borderRadius: "50%", background: "#4CAF6D" },
   slotList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 },
-  slotBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "transparent", color: "var(--text)", textAlign: "left" },
+  slotBtn: { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "transparent", color: "var(--text)", textAlign: "left" },
   slotBtnDisabled: { opacity: 0.35 },
   slotBtnSelected: { background: "var(--accent)", borderColor: "var(--accent)", fontWeight: 700 },
+  lastRoomWarning: { color: "#E05B5B", fontSize: 11, margin: "4px 0 0 2px" },
   input: { display: "block", width: "100%", marginBottom: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "#1C1C1F", color: "var(--text)" },
   checkboxRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, marginBottom: 10 },
   primaryBtn: { display: "inline-block", width: "100%", textAlign: "center", padding: "12px 16px", borderRadius: 10, border: "none", background: "var(--accent)", color: "#fff", fontWeight: 700, textDecoration: "none" }

@@ -183,6 +183,15 @@ licht gekomen en gefixt (zie diezelfde sectie).
   rij in `weekly_revenue_invoices` op, zelfs bij €0 omzet (voor een
   volledig overzicht/audit-trail) — enkel dan wordt Billit niet
   aangeroepen.
+- **E-maillijst exporteren** (`lib/store-sql.js: listMarketingEmails()` +
+  `GET /api/admin/customers-export`, knop "E-maillijst exporteren" in
+  `/backend`): CSV-download van alle klant-e-mailadressen verzameld via
+  boekingen (widget + backoffice), beperkt tot wie `marketing_opt_in = true`
+  heeft staan (het vinkje "Ik ontvang graag nieuws en promoties per e-mail"
+  in de widget). `customers.email` is uniek, dus elke klant staat er maar
+  één keer in met hun meest recente voorkeur. Enkel voor Admin (bevat
+  persoonsgegevens) — bedoeld om samen te voegen met de Wix-abonneelijst
+  voor een nieuwsbrief.
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief

@@ -541,7 +541,7 @@ export default function Backend() {
         </div>
       </header>
 
-      <div style={{ display: "flex" }}>
+      <div className="agenda-layout">
         <aside className="sidebar">
           <div className="mini-cal-header">
             <button type="button" className="mini-nav-btn" onClick={() => shiftPickerMonth(-1)}>‹</button>
@@ -577,6 +577,16 @@ export default function Backend() {
             <button className="nav-btn" onClick={() => load(mondayOf(toISO(new Date())))}>vandaag</button>
 
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              {authRole === "admin" && (
+                <a
+                  className="add-btn secondary"
+                  href="/api/admin/customers-export"
+                  title="CSV met e-mailadressen van klanten die toestemming gaven voor nieuws/promoties"
+                  style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                >
+                  E-maillijst exporteren
+                </a>
+              )}
               <button className="add-btn secondary" onClick={openGiftCards}>Cadeaubonnen</button>
               <button className="add-btn secondary" onClick={openCloseRoom}>+ Room(s) sluiten</button>
               <button className="add-btn secondary" onClick={() => setShowAddPersonal(true)}>+ Persoonlijke afspraak</button>
@@ -990,6 +1000,7 @@ const css = `
   .add-btn { padding: 8px 14px; border-radius: 8px; border: none; background: var(--admin-accent); color: #fff; font-weight: 700; }
   .add-btn.secondary { background: #fff; color: var(--admin-accent); border: 1px solid var(--admin-accent); }
   .add-btn:disabled { opacity: 0.5; }
+  .agenda-layout { display: flex; }
   .sidebar { width: 216px; flex-shrink: 0; padding: 18px 16px; border-right: 1px solid var(--admin-line); }
   .mini-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .mini-cal-title { font-weight: 700; font-size: 14px; }
