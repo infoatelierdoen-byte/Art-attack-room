@@ -48,6 +48,91 @@ function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+// Wijst elk event van een dag een kolom toe zodat events die elkaar in tijd
+// overlappen (bv. 3 boekingen van Art Attack Room, elk in een andere room,
+// exact op hetzelfde tijdstip) netjes naast elkaar komen te staan i.p.v.
+// volledig over elkaar heen (wat voorheen gebeurde — enkel het laatste event
+// in de lijst was dan nog zichtbaar/klikbaar). Standaard greedy
+// interval-graph-coloring, zoals de meeste kalender-UI's dat doen.
+function layoutDayEvents(dayEvents) {
+  const items = dayEvents.map(ev => {
+    const startMin = timeToMinutes(ev.start);
+    const endMin = ev.kind === "personal" ? timeToMinutes(ev.end) : startMin + (ev.durationMin || 90);
+    return { ev, startMin, endMin, col: 0, cols: 1 };
+  }).sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+  let active = [];
+  let clusterItems = [];
+
+  function closeCluster() {
+    if (clusterItems.length === 0) return;
+    const maxCols = clusterItems.reduce((m, it) => Math.max(m, it.col + 1), 1);
+    clusterItems.forEach(it => { it.cols = maxCols; });
+    clusterItems = [];
+  }
+
+  for (const item of items) {
+    active = active.filter(a => a.endMin > item.startMin);
+    if (active.length === 0) closeCluster();
+
+    const usedCols = new Set(active.map(a => a.col));
+    let col = 0;
+    while (usedCols.has(col)) col++;
+    item.col = col;
+
+    active.push(item);
+    clusterItems.push(item);
+  }
+  closeCluster();
+
+  return items;
+}
+
+// Bouwt de vaste room-kolommen (A/M/VL/VR) voor Art Attack Room-tijdsloten op
+// een dag, zoals in het referentiescherm dat Robin doorstuurde: elke room
+// heeft altijd zijn eigen kolom, ongeacht hoeveel er op dat moment effectief
+// geboekt zijn. Diensten zonder roomtoewijzing (Fluid Art) en persoonlijke
+// afspraken gebruiken deze grid niet — die blijven op de bestaande dynamische
+// overlap-layout (layoutDayEvents) draaien.
+function buildRoomGrid(dayEvents, roomOrder) {
+  if (!roomOrder.length) return [];
+  const roomEvents = dayEvents.filter(e => e.kind === "service" && e.usesRoomAssignment);
+  const closedEvents = dayEvents.filter(e => e.kind === "room_closed");
+  if (roomEvents.length === 0 && closedEvents.length === 0) return [];
+
+  const slotMap = new Map();
+  roomEvents.forEach(e => {
+    if (!slotMap.has(e.start)) slotMap.set(e.start, { start: e.start, durationMin: e.durationMin || 90 });
+  });
+  closedEvents.forEach(e => {
+    if (!slotMap.has(e.start)) {
+      slotMap.set(e.start, { start: e.start, durationMin: timeToMinutes(e.end) - timeToMinutes(e.start) });
+    }
+  });
+
+  const cells = [];
+  for (const slot of slotMap.values()) {
+    const startMin = timeToMinutes(slot.start);
+    const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
+    const height = (slot.durationMin / 60) * HOUR_PX;
+
+    roomOrder.forEach((room, idx) => {
+      const left = `calc(${(idx / roomOrder.length) * 100}% + 2px)`;
+      const width = `calc(${100 / roomOrder.length}% - 4px)`;
+      const booking = roomEvents.find(e => e.start === slot.start && e.roomCode === room.id);
+      const closed = closedEvents.find(e => e.start === slot.start && e.roomCode === room.id);
+      if (booking) {
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "booking", top, height, left, width, ev: booking, roomLabel: room.label });
+      } else if (closed) {
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "closed", top, height, left, width, ev: closed, roomLabel: room.label });
+      } else {
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "free", top, height, left, width, roomLabel: room.label });
+      }
+    });
+  }
+  return cells;
+}
+
 function serviceLabel(code) {
   if (code === "fluid_art") return "Fluid Art";
   if (code === "art_attack_room") return "Art Attack Room";
@@ -608,13 +693,45 @@ export default function Backend() {
                 {weekDays.map((d, i) => {
                   const dISO = toISO(d);
                   const dayEvents = events.filter(e => e.dateISO === dISO);
+                  const otherEvents = dayEvents.filter(e => !(e.kind === "service" && e.usesRoomAssignment) && e.kind !== "room_closed");
+                  const roomCells = buildRoomGrid(dayEvents, rooms);
                   return (
                     <div key={i} className="week-day-col">
                       <div className="week-day-head">{DAY_LABELS[i]} {d.getDate()}</div>
                       <div className="week-day-body" style={{ height: (HOUR_END - HOUR_START) * HOUR_PX }}>
-                        {dayEvents.map((ev, idx) => {
-                          const startMin = timeToMinutes(ev.start);
-                          const endMin = ev.kind === "personal" ? timeToMinutes(ev.end) : startMin + (ev.durationMin || 90);
+                        {roomCells.map(cell => {
+                          if (cell.kind === "free") {
+                            return (
+                              <div key={cell.key} className="cal-room-cell free" style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}>
+                                <div className="cal-room-label">{cell.roomLabel}</div>
+                                <div className="cal-room-sub">Vrij</div>
+                              </div>
+                            );
+                          }
+                          if (cell.kind === "closed") {
+                            return (
+                              <div key={cell.key} className="cal-room-cell closed" style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }} title={cell.ev.reason}>
+                                <div className="cal-room-label">{cell.roomLabel}</div>
+                                <div className="cal-room-sub">Niet beschikbaar</div>
+                              </div>
+                            );
+                          }
+                          const v = eventVisual(cell.ev);
+                          return (
+                            <div
+                              key={cell.key}
+                              className={`cal-event ${v.cls}${cell.ev.pendingConfirmation ? " clickable" : ""}`}
+                              style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
+                              onClick={cell.ev.pendingConfirmation ? () => openConfirmBooking(cell.ev) : undefined}
+                              title={cell.ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
+                            >
+                              <div className="cal-event-label">{v.label}</div>
+                              {v.sub && <div className="cal-event-sub">{v.sub}</div>}
+                            </div>
+                          );
+                        })}
+                        {layoutDayEvents(otherEvents).map((item, idx) => {
+                          const { ev, startMin, endMin, col, cols } = item;
                           const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
                           const height = ((endMin - startMin) / 60) * HOUR_PX;
                           const v = eventVisual(ev);
@@ -622,7 +739,12 @@ export default function Backend() {
                             <div
                               key={idx}
                               className={`cal-event ${v.cls}${ev.pendingConfirmation ? " clickable" : ""}`}
-                              style={{ top, height }}
+                              style={{
+                                top,
+                                height,
+                                left: `calc(${(col / cols) * 100}% + 3px)`,
+                                width: `calc(${100 / cols}% - 6px)`
+                              }}
                               onClick={ev.pendingConfirmation ? () => openConfirmBooking(ev) : undefined}
                               title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
                             >
@@ -1019,7 +1141,7 @@ const css = `
   .week-day-col { border: 1px solid var(--admin-line); border-radius: 10px; overflow: hidden; background: #fff; }
   .week-day-head { text-align: center; font-size: 12px; font-weight: 700; padding: 8px 0; border-bottom: 1px solid var(--admin-line); }
   .week-day-body { position: relative; background-image: repeating-linear-gradient(to bottom, #F1EEE7 0, #F1EEE7 1px, transparent 1px, transparent ${HOUR_PX}px); }
-  .cal-event { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 4px 6px; font-size: 11px; overflow: hidden; }
+  .cal-event { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 11px; overflow: hidden; box-sizing: border-box; }
   .cal-event-label { font-weight: 700; }
   .cal-event-sub { opacity: 0.8; }
   .cal-event.attack { background: #FBE9E1; border-left: 3px solid var(--admin-accent); }
@@ -1030,6 +1152,11 @@ const css = `
   .cal-event.pending-reservation { border: 1px dashed #7C7668; border-left-width: 3px; opacity: 0.85; }
   .cal-event.clickable { cursor: pointer; }
   .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
+  .cal-room-cell { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 10px; overflow: hidden; box-sizing: border-box; border: 1px solid var(--admin-line); }
+  .cal-room-cell.free { background: #fff; }
+  .cal-room-cell.closed { background: repeating-linear-gradient(45deg, #EDEAE2, #EDEAE2 5px, #E1DCD0 5px, #E1DCD0 10px); color: #8A8375; }
+  .cal-room-label { font-weight: 700; }
+  .cal-room-sub { opacity: 0.75; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
   .modal { background: #fff; padding: 20px; border-radius: 12px; width: 340px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .modal input, .modal select, .modal textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); font-family: inherit; width: 100%; box-sizing: border-box; }
