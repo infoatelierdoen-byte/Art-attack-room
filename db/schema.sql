@@ -201,6 +201,9 @@ CREATE TABLE bookings (
     gift_card_id            UUID REFERENCES gift_cards(id),  -- NULL = geen cadeaubon gebruikt
     gift_card_amount        NUMERIC(8,2),                    -- bedrag dat de cadeaubon dekt; effectief afgeschreven pas bij bevestigde betaling
     gift_card_redeemed_at   TIMESTAMPTZ,                     -- voorkomt dubbele afschrijving bij een herhaalde webhook-aanroep
+    refunded_amount         NUMERIC(8,2) NOT NULL DEFAULT 0, -- bij annuleren: wat effectief terugbetaald is (kan minder zijn dan amount_due bij een gedeeltelijke terugbetaling/annuleringskost)
+    refund_reason           TEXT,                            -- vrije notitie, bv. "annulering 2 dagen op voorhand, 20 EUR kost ingehouden"
+    refunded_at             TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

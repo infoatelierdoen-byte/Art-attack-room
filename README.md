@@ -35,6 +35,14 @@ inmiddels ook echt getest (niet enkel tegen pg-mem, zie "Hosting en een
 echte database" hieronder) — daarbij is trouwens een echte datumbug aan het
 licht gekomen en gefixt (zie diezelfde sectie).
 
+**Migraties op een bestaande live database:** `db/schema.sql` is enkel voor
+een nieuwe/lege database — draai het niet opnieuw tegen een database die al
+data bevat. Latere kolomwijzigingen komen in `db/migrations/` als apart
+nummer bestand (bv. `001_add_refund_tracking.sql` voor de terugbetaling bij
+annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
+één keer manueel uitgevoerd worden tegen de live database
+(`psql "$DATABASE_URL" -f db/migrations/001_add_refund_tracking.sql`).
+
 ## Wat hier al werkt
 
 - **Echte databaselaag** (`lib/store-sql.js` + `db/schema.sql` + `db/seed.sql`):
@@ -192,6 +200,20 @@ licht gekomen en gefixt (zie diezelfde sectie).
   één keer in met hun meest recente voorkeur. Enkel voor Admin (bevat
   persoonsgegevens) — bedoeld om samen te voegen met de Wix-abonneelijst
   voor een nieuwsbrief.
+- **Boeking annuleren en verplaatsen** ("Meer acties" in `/backend`, enkel
+  Admin): "Boeking annuleren" opent een zoekscherm (op datum/klantnaam), en
+  laat je bij het annuleren zelf kiezen hoeveel je terugbetaalt — volledig,
+  gedeeltelijk (bv. annuleringskost ingehouden) of niets
+  (`bookings.refunded_amount`/`refund_reason`/`refunded_at`, zie
+  `db/migrations/001_add_refund_tracking.sql`). Het bedrag dat je behoudt
+  telt nog mee in de wekelijkse omzetfactuur (`generateWeeklyRevenueInvoice()`
+  trekt `refunded_amount` af van `amount_due` i.p.v. de hele boeking te
+  negeren). Raakt bewust niet aan een eventueel gebruikte cadeaubon — die
+  terugstorting blijft voorlopig manueel werk. "Boeking verplaatsen" gebruikt
+  hetzelfde zoekscherm en laat je gewoon een nieuwe datum/tijdstip invullen —
+  klant, groepsgrootte, prijs en betaalstatus blijven exact hetzelfde staan;
+  enkel het tijdslot (en evt. de toegewezen room) verandert. Kan enkel naar
+  een tijdstip waar al een sessie gepland staat.
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief

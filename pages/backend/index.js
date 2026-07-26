@@ -209,6 +209,27 @@ export default function Backend() {
   const [confirmError, setConfirmError] = useState("");
   const [confirmSubmitting, setConfirmSubmitting] = useState(false);
 
+  const [detailTarget, setDetailTarget] = useState(null); // ev met bookingId, voor annuleren
+  const [detailError, setDetailError] = useState("");
+  const [detailSubmitting, setDetailSubmitting] = useState(false);
+  const [cancelRefundAmount, setCancelRefundAmount] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
+
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+
+  const [showFinder, setShowFinder] = useState(false);
+  const [finderMode, setFinderMode] = useState("cancel"); // "cancel" | "reschedule"
+  const [finderDate, setFinderDate] = useState(toISO(new Date()));
+  const [finderQuery, setFinderQuery] = useState("");
+  const [finderResults, setFinderResults] = useState([]);
+  const [finderLoading, setFinderLoading] = useState(false);
+
+  const [rescheduleTarget, setRescheduleTarget] = useState(null);
+  const [rescheduleDateISO, setRescheduleDateISO] = useState("");
+  const [rescheduleStart, setRescheduleStart] = useState("");
+  const [rescheduleError, setRescheduleError] = useState("");
+  const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
+
   function load(week) {
     setLoading(true);
     fetch(`/api/admin/sessions?week=${week}`)
@@ -236,6 +257,17 @@ export default function Backend() {
     });
     fetch("/api/admin/rooms").then(r => r.json()).then(d => setRooms(d.rooms || []));
   }, [authRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Boeking zoeken (voor annuleren/verplaatsen vanuit het "Meer acties"-menu,
+  // zonder dat je eerst zelf naar de juiste week in de agenda moet navigeren).
+  useEffect(() => {
+    if (!showFinder) return;
+    setFinderLoading(true);
+    fetch(`/api/admin/sessions?week=${finderDate}`)
+      .then(r => r.json())
+      .then(d => setFinderResults((d.events || []).filter(e => e.kind === "service" && e.bookingId)))
+      .finally(() => setFinderLoading(false));
+  }, [showFinder, finderDate]);
 
   async function submitLogin(e) {
     e.preventDefault();
@@ -560,6 +592,94 @@ export default function Backend() {
     }
   }
 
+  // --- Boeking annuleren (bv. foute testboeking opruimen) ---
+
+  function openDetail(ev) {
+    setDetailTarget(ev);
+    setDetailError("");
+    // Standaard vooraf ingevuld met het volledige bedrag (volledige
+    // terugbetaling) — de medewerker kan dit verlagen voor een
+    // gedeeltelijke terugbetaling (bv. annuleringskost ingehouden).
+    setCancelRefundAmount(ev.amount != null ? String(ev.amount) : "0");
+    setCancelReason("");
+  }
+
+  async function submitCancelBooking() {
+    setDetailError("");
+    setDetailSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/cancel-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookingId: detailTarget.bookingId,
+          refundAmount: Number(cancelRefundAmount) || 0,
+          reason: cancelReason
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setDetailTarget(null);
+      load(monday);
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailSubmitting(false);
+    }
+  }
+
+  function openFinder(mode) {
+    setFinderMode(mode);
+    setFinderDate(toISO(new Date()));
+    setFinderQuery("");
+    setFinderResults([]);
+    setShowFinder(true);
+    setShowActionsMenu(false);
+  }
+
+  function pickFinderResult(ev) {
+    setShowFinder(false);
+    if (finderMode === "cancel") {
+      openDetail(ev);
+    } else {
+      setRescheduleTarget(ev);
+      setRescheduleDateISO(ev.dateISO);
+      setRescheduleStart(ev.start);
+      setRescheduleError("");
+    }
+  }
+
+  async function submitReschedule(e) {
+    e.preventDefault();
+    setRescheduleError("");
+    setRescheduleSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/reschedule-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId: rescheduleTarget.bookingId, dateISO: rescheduleDateISO, start: rescheduleStart })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setRescheduleTarget(null);
+      load(monday);
+    } catch (err) {
+      setRescheduleError(err.message);
+    } finally {
+      setRescheduleSubmitting(false);
+    }
+  }
+
+  // Bepaalt wat een klik op een boeking-blok in de agenda doet: een
+  // manuele reservering die nog bevestigd moet worden opent de
+  // bevestig-modal, elke andere echte klantboeking opent het detail/
+  // annuleer-scherm. Vrije/gesloten cellen en privé-afspraken zijn niet
+  // klikbaar.
+  function handleEventClick(ev) {
+    if (ev.pendingConfirmation) return openConfirmBooking(ev);
+    if (ev.kind === "service" && ev.bookingId) return openDetail(ev);
+  }
+
   function eventVisual(ev) {
     // ev.redacted komt van de server (/api/admin/sessions) — die stuurt voor
     // de gast-rol de echte titel/klant/notitie/bedrag van privé-items al
@@ -661,21 +781,36 @@ export default function Backend() {
             <button className="nav-btn" onClick={() => shiftWeek(1)}>volgende week ›</button>
             <button className="nav-btn" onClick={() => load(mondayOf(toISO(new Date())))}>vandaag</button>
 
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {authRole === "admin" && (
-                <a
-                  className="add-btn secondary"
-                  href="/api/admin/customers-export"
-                  title="CSV met e-mailadressen van klanten die toestemming gaven voor nieuws/promoties"
-                  style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
-                >
-                  E-maillijst exporteren
-                </a>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, position: "relative" }}>
+              <button className="add-btn secondary" onClick={() => setShowActionsMenu(v => !v)}>
+                Meer acties {showActionsMenu ? "▴" : "▾"}
+              </button>
+              {showActionsMenu && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setShowActionsMenu(false)} />
+                  <div className="actions-menu">
+                    <button type="button" onClick={() => openFinder("cancel")}>Boeking annuleren</button>
+                    <button type="button" onClick={() => openFinder("reschedule")}>Boeking verplaatsen</button>
+                    <div className="actions-menu-divider" />
+                    <button type="button" onClick={() => { openGiftCards(); setShowActionsMenu(false); }}>Cadeaubonnen</button>
+                    <button type="button" onClick={() => { openCloseRoom(); setShowActionsMenu(false); }}>Room(s) sluiten</button>
+                    <button type="button" onClick={() => { setShowAddPersonal(true); setShowActionsMenu(false); }}>Persoonlijke afspraak</button>
+                    <button type="button" onClick={() => { openAddExtra(); setShowActionsMenu(false); }}>Extra sessie</button>
+                    {authRole === "admin" && (
+                      <>
+                        <div className="actions-menu-divider" />
+                        <a
+                          href="/api/admin/customers-export"
+                          title="CSV met e-mailadressen van klanten die toestemming gaven voor nieuws/promoties"
+                          onClick={() => setShowActionsMenu(false)}
+                        >
+                          E-maillijst exporteren
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </>
               )}
-              <button className="add-btn secondary" onClick={openGiftCards}>Cadeaubonnen</button>
-              <button className="add-btn secondary" onClick={openCloseRoom}>+ Room(s) sluiten</button>
-              <button className="add-btn secondary" onClick={() => setShowAddPersonal(true)}>+ Persoonlijke afspraak</button>
-              <button className="add-btn secondary" onClick={openAddExtra}>+ Extra sessie</button>
               <button className="add-btn" onClick={openAddBooking}>+ Boeking toevoegen</button>
             </div>
           </div>
@@ -720,10 +855,10 @@ export default function Backend() {
                           return (
                             <div
                               key={cell.key}
-                              className={`cal-event ${v.cls}${cell.ev.pendingConfirmation ? " clickable" : ""}`}
+                              className={`cal-event ${v.cls}${cell.ev.pendingConfirmation || cell.ev.bookingId ? " clickable" : ""}`}
                               style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
-                              onClick={cell.ev.pendingConfirmation ? () => openConfirmBooking(cell.ev) : undefined}
-                              title={cell.ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
+                              onClick={() => handleEventClick(cell.ev)}
+                              title={cell.ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (cell.ev.bookingId ? "Klik voor details / annuleren" : undefined)}
                             >
                               <div className="cal-event-label">{v.label}</div>
                               {v.sub && <div className="cal-event-sub">{v.sub}</div>}
@@ -738,15 +873,15 @@ export default function Backend() {
                           return (
                             <div
                               key={idx}
-                              className={`cal-event ${v.cls}${ev.pendingConfirmation ? " clickable" : ""}`}
+                              className={`cal-event ${v.cls}${ev.pendingConfirmation || ev.bookingId ? " clickable" : ""}`}
                               style={{
                                 top,
                                 height,
                                 left: `calc(${(col / cols) * 100}% + 3px)`,
                                 width: `calc(${100 / cols}% - 6px)`
                               }}
-                              onClick={ev.pendingConfirmation ? () => openConfirmBooking(ev) : undefined}
-                              title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : undefined}
+                              onClick={() => handleEventClick(ev)}
+                              title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (ev.bookingId ? "Klik voor details / annuleren" : undefined)}
                             >
                               <div className="cal-event-label">{v.label}</div>
                               {v.sub && <div className="cal-event-sub">{v.sub}</div>}
@@ -1111,6 +1246,132 @@ export default function Backend() {
           </form>
         </div>
       )}
+
+      {detailTarget && (
+        <div className="modal-backdrop" onClick={() => setDetailTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Boekingsdetails</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              {detailTarget.customer} — {serviceLabel(detailTarget.service)}, {detailTarget.partySize}p
+              {detailTarget.roomCode && <> — Room {detailTarget.roomCode}</>}
+              <br />
+              {detailTarget.dateISO} om {detailTarget.start}
+              {detailTarget.amount != null && <> — €{detailTarget.amount.toFixed(2)}</>}
+              {detailTarget.paymentStatus && <> ({detailTarget.paymentStatus === "paid" ? "betaald" : "nog niet betaald"})</>}
+            </p>
+
+            {authRole === "admin" ? (
+              <>
+                <p style={{ fontSize: 12, color: "#7C7668" }}>
+                  Annuleren maakt de room terug vrij voor dit tijdslot. Vul hieronder in hoeveel je
+                  terugbetaalt aan de klant — volledig, gedeeltelijk (bv. annuleringskost ingehouden)
+                  of niets. Het behouden bedrag telt nog mee in de wekelijkse omzetfactuur.
+                </p>
+                {detailTarget.amount != null && (
+                  <>
+                    <label className="field-label">Terug te betalen bedrag (max €{detailTarget.amount.toFixed(2)})</label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        type="number" min="0" max={detailTarget.amount} step="0.01"
+                        value={cancelRefundAmount}
+                        onChange={e => setCancelRefundAmount(e.target.value)}
+                        style={{ width: 100 }}
+                      />
+                      <button type="button" className="add-btn secondary" onClick={() => setCancelRefundAmount(String(detailTarget.amount))}>Volledig</button>
+                      <button type="button" className="add-btn secondary" onClick={() => setCancelRefundAmount("0")}>Geen</button>
+                    </div>
+                    <label className="field-label">Reden / notitie (optioneel)</label>
+                    <input type="text" placeholder='bv. "annulering 2 dagen op voorhand, 20 EUR kost"' value={cancelReason} onChange={e => setCancelReason(e.target.value)} />
+                  </>
+                )}
+                {detailError && <p className="error-text">{detailError}</p>}
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button type="button" onClick={() => setDetailTarget(null)}>Sluiten</button>
+                  <button
+                    type="button"
+                    className="add-btn"
+                    style={{ background: "#B33A2E" }}
+                    disabled={detailSubmitting}
+                    onClick={submitCancelBooking}
+                  >
+                    {detailSubmitting ? "Bezig…" : "Boeking annuleren"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button type="button" onClick={() => setDetailTarget(null)}>Sluiten</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showFinder && (
+        <div className="modal-backdrop" onClick={() => setShowFinder(false)}>
+          <div className="modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
+            <h3>{finderMode === "cancel" ? "Boeking annuleren" : "Boeking verplaatsen"}</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              Zoek de boeking op datum en/of klantnaam, en klik ze aan.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input type="date" value={finderDate} onChange={e => setFinderDate(e.target.value)} />
+              <input
+                type="text" placeholder="Klantnaam…" value={finderQuery}
+                onChange={e => setFinderQuery(e.target.value)} style={{ flex: 1 }}
+              />
+            </div>
+            <div className="finder-results">
+              {finderLoading && <p style={{ fontSize: 13, color: "#7C7668" }}>Laden…</p>}
+              {!finderLoading && finderResults
+                .filter(ev => !finderQuery || (ev.customer || "").toLowerCase().includes(finderQuery.toLowerCase()))
+                .map(ev => (
+                  <button type="button" key={ev.bookingId} className="finder-row" onClick={() => pickFinderResult(ev)}>
+                    <span className="finder-row-main">{ev.customer} — {serviceLabel(ev.service)}</span>
+                    <span className="finder-row-sub">{ev.dateISO} om {ev.start} · {ev.partySize}p{ev.roomCode ? ` · Room ${ev.roomCode}` : ""}</span>
+                  </button>
+                ))}
+              {!finderLoading && finderResults.length > 0 &&
+                finderResults.filter(ev => !finderQuery || (ev.customer || "").toLowerCase().includes(finderQuery.toLowerCase())).length === 0 && (
+                <p style={{ fontSize: 13, color: "#7C7668" }}>Geen boekingen gevonden voor deze week/naam.</p>
+              )}
+              {!finderLoading && finderResults.length === 0 && (
+                <p style={{ fontSize: 13, color: "#7C7668" }}>Geen boekingen in de week van {finderDate}.</p>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowFinder(false)}>Sluiten</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rescheduleTarget && (
+        <div className="modal-backdrop" onClick={() => setRescheduleTarget(null)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitReschedule}>
+            <h3>Boeking verplaatsen</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              {rescheduleTarget.customer} — {serviceLabel(rescheduleTarget.service)}, {rescheduleTarget.partySize}p.
+              Huidig tijdstip: {rescheduleTarget.dateISO} om {rescheduleTarget.start}.
+            </p>
+            <label className="field-label">Nieuwe datum</label>
+            <input required type="date" value={rescheduleDateISO} onChange={e => setRescheduleDateISO(e.target.value)} />
+            <label className="field-label">Nieuw tijdstip</label>
+            <input required type="time" value={rescheduleStart} onChange={e => setRescheduleStart(e.target.value)} />
+            <p style={{ fontSize: 12, color: "#7C7668" }}>
+              Klant, groepsgrootte, prijs en betaalstatus blijven ongewijzigd — enkel het tijdslot verandert.
+              Kan enkel naar een tijdstip waar effectief een sessie gepland staat.
+            </p>
+            {rescheduleError && <p className="error-text">{rescheduleError}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setRescheduleTarget(null)}>Annuleren</button>
+              <button type="submit" className="add-btn" disabled={rescheduleSubmitting}>
+                {rescheduleSubmitting ? "Bezig…" : "Verplaatsen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -1152,6 +1413,16 @@ const css = `
   .cal-event.pending-reservation { border: 1px dashed #7C7668; border-left-width: 3px; opacity: 0.85; }
   .cal-event.clickable { cursor: pointer; }
   .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
+  .menu-backdrop { position: fixed; inset: 0; z-index: 20; background: transparent; }
+  .actions-menu { position: absolute; top: 40px; right: 0; z-index: 21; background: #fff; border: 1px solid var(--admin-line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.12); padding: 6px; display: flex; flex-direction: column; min-width: 200px; }
+  .actions-menu button, .actions-menu a { display: block; text-align: left; padding: 8px 10px; border: none; background: none; border-radius: 6px; font-size: 13px; color: #20221F; text-decoration: none; cursor: pointer; }
+  .actions-menu button:hover, .actions-menu a:hover { background: #F1EEE7; }
+  .actions-menu-divider { height: 1px; background: var(--admin-line); margin: 4px 2px; }
+  .finder-results { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .finder-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; background: #fff; cursor: pointer; }
+  .finder-row:hover { background: #F1EEE7; }
+  .finder-row-main { font-size: 13px; font-weight: 700; }
+  .finder-row-sub { font-size: 11px; color: #7C7668; }
   .cal-room-cell { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 10px; overflow: hidden; box-sizing: border-box; border: 1px solid var(--admin-line); }
   .cal-room-cell.free { background: #fff; }
   .cal-room-cell.closed { background: repeating-linear-gradient(45deg, #EDEAE2, #EDEAE2 5px, #E1DCD0 5px, #E1DCD0 10px); color: #8A8375; }
