@@ -9,8 +9,10 @@
   },
   "dependencies": {
     "@mollie/api-client": "4.6.0",
+    "csv-parse": "^7.0.1",
     "next": "^14.2.35",
     "nodemailer": "^9.0.3",
+    "pdfkit": "^0.19.1",
     "pg": "8.22.0",
     "pg-mem": "3.0.14",
     "react": "18.3.1",

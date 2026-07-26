@@ -217,18 +217,18 @@ export default function Backend() {
 
   const [showActionsMenu, setShowActionsMenu] = useState(false);
 
-  const [showFinder, setShowFinder] = useState(false);
-  const [finderMode, setFinderMode] = useState("cancel"); // "cancel" | "reschedule"
-  const [finderDate, setFinderDate] = useState(toISO(new Date()));
-  const [finderQuery, setFinderQuery] = useState("");
-  const [finderResults, setFinderResults] = useState([]);
-  const [finderLoading, setFinderLoading] = useState(false);
-
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [rescheduleDateISO, setRescheduleDateISO] = useState("");
   const [rescheduleStart, setRescheduleStart] = useState("");
   const [rescheduleError, setRescheduleError] = useState("");
   const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
+
+  const [showImport, setShowImport] = useState(false);
+  const [importFileName, setImportFileName] = useState("");
+  const [importText, setImportText] = useState("");
+  const [importSubmitting, setImportSubmitting] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
 
   function load(week) {
     setLoading(true);
@@ -257,17 +257,6 @@ export default function Backend() {
     });
     fetch("/api/admin/rooms").then(r => r.json()).then(d => setRooms(d.rooms || []));
   }, [authRole]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Boeking zoeken (voor annuleren/verplaatsen vanuit het "Meer acties"-menu,
-  // zonder dat je eerst zelf naar de juiste week in de agenda moet navigeren).
-  useEffect(() => {
-    if (!showFinder) return;
-    setFinderLoading(true);
-    fetch(`/api/admin/sessions?week=${finderDate}`)
-      .then(r => r.json())
-      .then(d => setFinderResults((d.events || []).filter(e => e.kind === "service" && e.bookingId)))
-      .finally(() => setFinderLoading(false));
-  }, [showFinder, finderDate]);
 
   async function submitLogin(e) {
     e.preventDefault();
@@ -628,25 +617,15 @@ export default function Backend() {
     }
   }
 
-  function openFinder(mode) {
-    setFinderMode(mode);
-    setFinderDate(toISO(new Date()));
-    setFinderQuery("");
-    setFinderResults([]);
-    setShowFinder(true);
-    setShowActionsMenu(false);
-  }
-
-  function pickFinderResult(ev) {
-    setShowFinder(false);
-    if (finderMode === "cancel") {
-      openDetail(ev);
-    } else {
-      setRescheduleTarget(ev);
-      setRescheduleDateISO(ev.dateISO);
-      setRescheduleStart(ev.start);
-      setRescheduleError("");
-    }
+  // Vanuit het boekingsdetailscherm (na een klik op een boeking in de
+  // agenda) — zo gaan zowel "Boeking verplaatsen" als "Boeking annuleren"
+  // altijd meteen over de juiste boeking, zonder apart zoekscherm.
+  function openRescheduleFromDetail() {
+    setRescheduleTarget(detailTarget);
+    setRescheduleDateISO(detailTarget.dateISO);
+    setRescheduleStart(detailTarget.start);
+    setRescheduleError("");
+    setDetailTarget(null);
   }
 
   async function submitReschedule(e) {
@@ -670,10 +649,57 @@ export default function Backend() {
     }
   }
 
+  // --- Boekingen importeren (Wix-CSV) ---
+
+  function openImport() {
+    setImportFileName("");
+    setImportText("");
+    setImportError("");
+    setImportResult(null);
+    setShowImport(true);
+    setShowActionsMenu(false);
+  }
+
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportError("");
+    setImportResult(null);
+    const reader = new FileReader();
+    reader.onload = () => setImportText(String(reader.result || ""));
+    reader.onerror = () => setImportError("Kon het bestand niet lezen.");
+    reader.readAsText(file);
+  }
+
+  async function submitImport() {
+    if (!importText) {
+      setImportError("Kies eerst een CSV-bestand.");
+      return;
+    }
+    setImportError("");
+    setImportSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/import-bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: importText })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setImportResult(data);
+      load(monday);
+    } catch (err) {
+      setImportError(err.message);
+    } finally {
+      setImportSubmitting(false);
+    }
+  }
+
   // Bepaalt wat een klik op een boeking-blok in de agenda doet: een
   // manuele reservering die nog bevestigd moet worden opent de
   // bevestig-modal, elke andere echte klantboeking opent het detail/
-  // annuleer-scherm. Vrije/gesloten cellen en privé-afspraken zijn niet
+  // annuleer-scherm. Vrije/gesloten cellen en persoonlijke afspraken zijn niet
   // klikbaar.
   function handleEventClick(ev) {
     if (ev.pendingConfirmation) return openConfirmBooking(ev);
@@ -789,9 +815,6 @@ export default function Backend() {
                 <>
                   <div className="menu-backdrop" onClick={() => setShowActionsMenu(false)} />
                   <div className="actions-menu">
-                    <button type="button" onClick={() => openFinder("cancel")}>Boeking annuleren</button>
-                    <button type="button" onClick={() => openFinder("reschedule")}>Boeking verplaatsen</button>
-                    <div className="actions-menu-divider" />
                     <button type="button" onClick={() => { openGiftCards(); setShowActionsMenu(false); }}>Cadeaubonnen</button>
                     <button type="button" onClick={() => { openCloseRoom(); setShowActionsMenu(false); }}>Room(s) sluiten</button>
                     <button type="button" onClick={() => { setShowAddPersonal(true); setShowActionsMenu(false); }}>Persoonlijke afspraak</button>
@@ -799,6 +822,14 @@ export default function Backend() {
                     {authRole === "admin" && (
                       <>
                         <div className="actions-menu-divider" />
+                        <button type="button" onClick={openImport}>Boekingen importeren (CSV)</button>
+                        <a
+                          href={`/api/admin/week-export-pdf?week=${monday}`}
+                          title="PDF met alle boekingen van deze week, om extern te bewaren"
+                          onClick={() => setShowActionsMenu(false)}
+                        >
+                          Week exporteren (PDF)
+                        </a>
                         <a
                           href="/api/admin/customers-export"
                           title="CSV met e-mailadressen van klanten die toestemming gaven voor nieuws/promoties"
@@ -1285,8 +1316,19 @@ export default function Backend() {
                   </>
                 )}
                 {detailError && <p className="error-text">{detailError}</p>}
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                   <button type="button" onClick={() => setDetailTarget(null)}>Sluiten</button>
+                  <a
+                    className="add-btn secondary"
+                    style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                    href={`/api/admin/booking-export-pdf?bookingId=${detailTarget.bookingId}`}
+                    title="Download deze boeking als PDF, om extern te bewaren"
+                  >
+                    Boeking exporteren (PDF)
+                  </a>
+                  <button type="button" className="add-btn secondary" onClick={openRescheduleFromDetail}>
+                    Boeking verplaatsen
+                  </button>
                   <button
                     type="button"
                     className="add-btn"
@@ -1303,45 +1345,6 @@ export default function Backend() {
                 <button type="button" onClick={() => setDetailTarget(null)}>Sluiten</button>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {showFinder && (
-        <div className="modal-backdrop" onClick={() => setShowFinder(false)}>
-          <div className="modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
-            <h3>{finderMode === "cancel" ? "Boeking annuleren" : "Boeking verplaatsen"}</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
-              Zoek de boeking op datum en/of klantnaam, en klik ze aan.
-            </p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <input type="date" value={finderDate} onChange={e => setFinderDate(e.target.value)} />
-              <input
-                type="text" placeholder="Klantnaam…" value={finderQuery}
-                onChange={e => setFinderQuery(e.target.value)} style={{ flex: 1 }}
-              />
-            </div>
-            <div className="finder-results">
-              {finderLoading && <p style={{ fontSize: 13, color: "#7C7668" }}>Laden…</p>}
-              {!finderLoading && finderResults
-                .filter(ev => !finderQuery || (ev.customer || "").toLowerCase().includes(finderQuery.toLowerCase()))
-                .map(ev => (
-                  <button type="button" key={ev.bookingId} className="finder-row" onClick={() => pickFinderResult(ev)}>
-                    <span className="finder-row-main">{ev.customer} — {serviceLabel(ev.service)}</span>
-                    <span className="finder-row-sub">{ev.dateISO} om {ev.start} · {ev.partySize}p{ev.roomCode ? ` · Room ${ev.roomCode}` : ""}</span>
-                  </button>
-                ))}
-              {!finderLoading && finderResults.length > 0 &&
-                finderResults.filter(ev => !finderQuery || (ev.customer || "").toLowerCase().includes(finderQuery.toLowerCase())).length === 0 && (
-                <p style={{ fontSize: 13, color: "#7C7668" }}>Geen boekingen gevonden voor deze week/naam.</p>
-              )}
-              {!finderLoading && finderResults.length === 0 && (
-                <p style={{ fontSize: 13, color: "#7C7668" }}>Geen boekingen in de week van {finderDate}.</p>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button type="button" onClick={() => setShowFinder(false)}>Sluiten</button>
-            </div>
           </div>
         </div>
       )}
@@ -1370,6 +1373,64 @@ export default function Backend() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {showImport && (
+        <div className="modal-backdrop" onClick={() => setShowImport(false)}>
+          <div className="modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+            <h3>Boekingen importeren (CSV)</h3>
+            <p style={{ fontSize: 13, color: "#7C7668" }}>
+              Voor een boekingslijst uit Wix Bookings (CSV-export). Blokkeert de betrokken tijdsloten
+              hier zodat er niet dubbel geboekt kan worden via de widget, en zet de klanten in de
+              database. Geannuleerde Wix-boekingen worden overgeslagen. Groepsgrootte bij Art Attack
+              Room staat vast op 2 (het echte aantal staat niet betrouwbaar in de export) — pas dit
+              nadien manueel aan per boeking indien nodig. Tijdsloten buiten het vaste uurrooster
+              worden overgeslagen en hieronder gemeld. Je mag hetzelfde bestand gerust meermaals
+              uploaden — bestaande boekingen worden niet dubbel aangemaakt.
+            </p>
+            <input type="file" accept=".csv" onChange={handleImportFile} />
+            {importFileName && <p style={{ fontSize: 12, color: "#7C7668" }}>Gekozen: {importFileName}</p>}
+            {importError && <p className="error-text">{importError}</p>}
+
+            {importResult && (
+              <div style={{ marginTop: 12, fontSize: 13 }}>
+                <p style={{ fontWeight: 700 }}>
+                  {importResult.results.imported || 0} geïmporteerd van {importResult.totalRows} rijen.
+                </p>
+                <p style={{ color: "#7C7668" }}>
+                  {importResult.results.duplicate || 0} al bestaand (overgeslagen) ·{" "}
+                  {importResult.results.no_session || 0} buiten uurrooster ·{" "}
+                  {importResult.results.full || 0} tijdslot volzet ·{" "}
+                  {importResult.results.error || 0} fout
+                  {importResult.parseErrors.length > 0 && <> · {importResult.parseErrors.length} onleesbare rij(en)</>}
+                </p>
+                {(importResult.details.length > 0 || importResult.parseErrors.length > 0) && (
+                  <div className="finder-results" style={{ maxHeight: 220 }}>
+                    {importResult.details.map((d, i) => (
+                      <div key={i} className="finder-row" style={{ cursor: "default" }}>
+                        <span className="finder-row-main">{d.customer} — {d.dateISO} {d.start}</span>
+                        <span className="finder-row-sub">{d.status}: {d.message}</span>
+                      </div>
+                    ))}
+                    {importResult.parseErrors.map((e, i) => (
+                      <div key={`p${i}`} className="finder-row" style={{ cursor: "default" }}>
+                        <span className="finder-row-main">Regel {e.line}</span>
+                        <span className="finder-row-sub">{e.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowImport(false)}>Sluiten</button>
+              <button type="button" className="add-btn" disabled={importSubmitting || !importText} onClick={submitImport}>
+                {importSubmitting ? "Bezig…" : "Importeren"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1418,9 +1479,8 @@ const css = `
   .actions-menu button, .actions-menu a { display: block; text-align: left; padding: 8px 10px; border: none; background: none; border-radius: 6px; font-size: 13px; color: #20221F; text-decoration: none; cursor: pointer; }
   .actions-menu button:hover, .actions-menu a:hover { background: #F1EEE7; }
   .actions-menu-divider { height: 1px; background: var(--admin-line); margin: 4px 2px; }
-  .finder-results { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
-  .finder-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; background: #fff; cursor: pointer; }
-  .finder-row:hover { background: #F1EEE7; }
+  .finder-results { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .finder-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; background: #fff; }
   .finder-row-main { font-size: 13px; font-weight: 700; }
   .finder-row-sub { font-size: 11px; color: #7C7668; }
   .cal-room-cell { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 10px; overflow: hidden; box-sizing: border-box; border: 1px solid var(--admin-line); }

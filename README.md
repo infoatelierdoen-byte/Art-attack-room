@@ -200,20 +200,60 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   één keer in met hun meest recente voorkeur. Enkel voor Admin (bevat
   persoonsgegevens) — bedoeld om samen te voegen met de Wix-abonneelijst
   voor een nieuwsbrief.
-- **Boeking annuleren en verplaatsen** ("Meer acties" in `/backend`, enkel
-  Admin): "Boeking annuleren" opent een zoekscherm (op datum/klantnaam), en
-  laat je bij het annuleren zelf kiezen hoeveel je terugbetaalt — volledig,
-  gedeeltelijk (bv. annuleringskost ingehouden) of niets
-  (`bookings.refunded_amount`/`refund_reason`/`refunded_at`, zie
+- **Boeking annuleren en verplaatsen** (enkel Admin): geen zoekscherm meer —
+  beide acties zitten in het detailscherm van een boeking, klik de boeking
+  gewoon aan in de agenda. Niet in het "Meer acties"-menu (dat bevat enkel
+  nog Cadeaubonnen, Room(s) sluiten, Persoonlijke afspraak, Extra sessie en
+  E-maillijst exporteren). Bij "Boeking annuleren" kies je zelf hoeveel je
+  terugbetaalt — volledig, gedeeltelijk (bv. annuleringskost ingehouden) of
+  niets (`bookings.refunded_amount`/`refund_reason`/`refunded_at`, zie
   `db/migrations/001_add_refund_tracking.sql`). Het bedrag dat je behoudt
   telt nog mee in de wekelijkse omzetfactuur (`generateWeeklyRevenueInvoice()`
   trekt `refunded_amount` af van `amount_due` i.p.v. de hele boeking te
   negeren). Raakt bewust niet aan een eventueel gebruikte cadeaubon — die
-  terugstorting blijft voorlopig manueel werk. "Boeking verplaatsen" gebruikt
-  hetzelfde zoekscherm en laat je gewoon een nieuwe datum/tijdstip invullen —
-  klant, groepsgrootte, prijs en betaalstatus blijven exact hetzelfde staan;
-  enkel het tijdslot (en evt. de toegewezen room) verandert. Kan enkel naar
-  een tijdstip waar al een sessie gepland staat.
+  terugstorting blijft voorlopig manueel werk. "Boeking verplaatsen" laat je
+  gewoon een nieuwe datum/tijdstip invullen; klant, groepsgrootte, prijs en
+  betaalstatus blijven exact hetzelfde staan, enkel het tijdslot (en evt. de
+  toegewezen room) verandert. Kan enkel naar een tijdstip waar al een sessie
+  gepland staat.
+- **Boeking exporteren als PDF** (enkel Admin, `lib/pdf.js` met `pdfkit` —
+  pure JavaScript, geen headless browser nodig zodat dit ook op Vercel's
+  serverless functies werkt): "Boeking exporteren (PDF)" in het
+  detailscherm van 1 boeking geeft alle gegevens (klant, tijdstip, room,
+  bedrag, betaal-/terugbetalingsstatus) als downloadbare PDF, om extern te
+  bewaren. "Week exporteren (PDF)" in "Meer acties" geeft een overzicht van
+  alle boekingen in de zichtbare week in 1 PDF. Geen vervanging van de
+  Billit-verzamelfactuur, enkel een leesbaar exportbestand.
+- **BELANGRIJKE BUGFIX — dagen naast de ankerdatum kregen nooit sessies**
+  (`lib/store-sql.js: ruleAppliesOn()`): alle Art Attack Room-weekdagregels
+  delen dezelfde `anchor_date` (een woensdag) in `db/seed.sql`. De oude
+  check eiste dat het aantal dagen sinds die ankerdatum deelbaar was door 7
+  — dat klopte toevallig voor woensdag, maar voor donderdag/vrijdag/
+  zaterdag/zondag was dat aantal dagen NOOIT deelbaar door 7, dus voor die
+  4 dagen werd er nooit een sessie gematerialiseerd (de widget toonde er
+  simpelweg geen enkel tijdstip). Ontdekt tijdens het testen van de
+  Wix-import hieronder. Gefixt door eerst de eerste echte occurrence van
+  elke regel z'n eigen weekdag te bepalen, en pas dán de tussenperiode te
+  toetsen. Geverifieerd: alle 5 weekdagen (wo/do/vr/za/zo) tonen nu correct
+  hun tijdsloten.
+- **Boekingen importeren uit Wix (CSV)** (`lib/wixImport.js` + `lib/store-sql.js:
+  importWixBooking()`, "Boekingen importeren (CSV)" in "Meer acties", enkel
+  Admin): voor een boekingslijst-export uit Wix Bookings. Blokkeert de
+  betrokken tijdsloten in dit systeem (voorkomt dubbele boekingen via de
+  widget) en zet de klanten in de database. Geannuleerde Wix-boekingen
+  worden overgeslagen. Groepsgrootte bij Art Attack Room staat vast op 2
+  (bewuste keuze, juli 2026 — de CSV-export geeft geen betrouwbaar aantal
+  personen door, enkel het aantal "rooms" dat altijd 1 is); bij Fluid Art
+  wordt "Bezette plaatsen" wel als het echte aantal gebruikt. Rijen op een
+  tijdstip buiten het vaste uurrooster (bv. een uitzonderlijk ingepaste
+  boeking) worden overgeslagen en gemeld — voeg die eerst toe via "Extra
+  sessie" en upload dan opnieuw (idempotent, veilig om hetzelfde bestand
+  meermaals te uploaden). `booked_via` wordt op `'wix_import'` gezet zodat
+  `generateWeeklyRevenueInvoice()` deze omzet nooit meerekent (die is al via
+  Wix afgehandeld). Geverifieerd tegen de echte, door Robin aangeleverde
+  boekingslijst (85 rijen): na de bugfix hierboven importeerden 53 rijen
+  correct, de overige 32 zijn tijdstippen buiten het vaste uurrooster
+  (grotendeels al voorbije data, een aantal toekomstige nog te herbekijken).
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief
