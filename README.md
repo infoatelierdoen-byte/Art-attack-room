@@ -276,6 +276,22 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   Geverifieerd end-to-end tegen een draaiende server: aanmaken, bewerken,
   verwijderen en de validatie dat het einduur na het startuur moet liggen —
   allemaal getest via `curl`.
+- **Widget als pop-up embedbaar** (`public/embed.js`, "Widget embedden"
+  hieronder): in plaats van de widget het volledige scherm te laten
+  innemen, verschijnt hij nu als een gecentreerd venster met overlay — de
+  rand van de website blijft zichtbaar. Twee regels HTML om te plakken (in
+  Wix nu, op een eigen site later — het script bemoeit zich niet met welk
+  platform de pagina host). Sluiten via kruisje, Escape, of een klik naast
+  het venster. Geverifieerd met een gesimuleerde pagina (jsdom, geen echte
+  browser beschikbaar in deze sandbox): knop-klik opent de pop-up met de
+  juiste iframe-url, Escape/kruisje/klik-naast-het-venster sluiten hem
+  allemaal correct, de scroll-lock van de achterliggende pagina wordt netjes
+  aan- en uitgezet, en een supersnelle open→dicht→open→dicht-test wierp geen
+  fouten op (een echte bug die dat testen aan het licht bracht, en meteen
+  gefixt is). De widget zelf schakelt bij de gekozen pop-up-breedte (480px,
+  ruim onder de bestaande 900px-drempel in `pages/widget.js`) automatisch
+  naar zijn compacte weergave, precies zoals bedoeld — dat is een bestaande
+  responsive breakpoint, geen nieuwe code.
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief
@@ -450,6 +466,52 @@ via de webhook, en de wekelijkse verzamelfactuur. Dat leverde meteen een
 concrete fix op (zie hierboven, `pgDateToISO()`), dus dit was geen overbodige
 stap: het bewijst dat het gedrag tegen een échte database niet zomaar
 hetzelfde is als tegen pg-mem, en dat is nu opgelost en opnieuw bevestigd.
+
+## Widget embedden
+
+De boekingswidget (`/widget`) draait op zijn eigen URL, los van welk
+platform je website host — hetzelfde plak-en-klaar stukje werkt dus zowel nu
+in Wix als straks op een eigen website, zonder aanpassing.
+
+**Als pop-up (aanbevolen, Robin's voorkeur, aug 2026):** de widget verschijnt
+dan als een gecentreerd venster met een donkere overlay erachter — de rand
+van je website blijft zichtbaar rondom, in plaats van dat de widget het hele
+scherm inneemt. Dit gebeurt via `public/embed.js` (automatisch mee
+gepubliceerd op `https://JOUW-DOMEIN/embed.js` zodra je op Vercel staat).
+Plak dit in Wix bij "Embed HTML" (of later, ergens in de `<body>` van je
+eigen site):
+
+```html
+<script src="https://JOUW-DOMEIN/embed.js" data-widget-url="https://JOUW-DOMEIN/widget"></script>
+<button data-atelierdoen-booking>Boek nu</button>
+```
+
+Vervang `JOUW-DOMEIN` door je echte Vercel-adres. De knop mag je volledig
+naar eigen smaak stylen (kleur, tekst, plaats) — het `data-atelierdoen-booking`-
+attribuut is het enige dat telt, dat vertelt het script welk element de
+pop-up moet openen bij een klik. Je mag ook meerdere zulke knoppen op een
+pagina hebben. Sluiten kan via het kruisje, de Escape-toets, of een klik
+naast het venster. Voor eigen JavaScript-code (bv. een Wix "custom
+onClick") kan je ook rechtstreeks `AtelierDoenBooking.open()` /
+`AtelierDoenBooking.close()` aanroepen.
+
+De pop-up zelf is met opzet vrij smal (max. 480px breed) — dat is bewust:
+de widget schakelt vanaf 900px breedte over naar de brede bureaublad-
+weergave (foto naast het boekingspaneel, zie `pages/widget.js:
+layoutCss`, `@media (min-width: 900px)`), wat niet past in een pop-up. Bij
+480px blijft de widget dus automatisch in zijn compacte, mobiel-achtige
+weergave (foto boven, paneel eronder) — precies wat je in een pop-up wil
+zien.
+
+**Als volledig ingebedde sectie (het alternatief):** wil je de widget ooit
+gewoon ergens middenin een pagina laten staan (geen pop-up, geen knop), dan
+kan dat nog steeds gewoon met een rechtstreekse iframe:
+```html
+<iframe src="https://JOUW-DOMEIN/widget" style="width:100%;height:800px;border:0;"></iframe>
+```
+Dat was de oorspronkelijke aanpak vóór de pop-up-versie hierboven — nog
+steeds bruikbaar, bv. op een aparte "Boek nu"-pagina waar de widget wél de
+hoofdinhoud mag zijn.
 
 ## Mollie testen
 
@@ -688,5 +750,7 @@ pages/
   api/gift-cards/purchase.js        klant koopt een cadeaubon (Mollie-checkout aanmaken)
   api/admin/staff-shifts.js         personeelsplanning: week ophalen (GET) / dag toevoegen (POST)
   api/admin/staff-shifts/[id].js    personeelsplanning: bewerken (PATCH) / verwijderen (DELETE)
+public/
+  embed.js                 pop-up-launcher om /widget op een externe website (Wix, later eigen site) te embedden
 vercel.json          cronjob-config voor de wekelijkse verzamelfactuur (Vercel-hosting)
 ```
