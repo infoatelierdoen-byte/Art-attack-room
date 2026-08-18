@@ -68,23 +68,23 @@ CREATE TABLE rooms (
 -- ---------------------------------------------------------
 CREATE TABLE services (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                    TEXT NOT NULL,                 -- "Fluid Art", "Art Attack Room"
+    name                    TEXT NOT NULL,                 -- "Fluid Art", "Action Painting"
     type                    service_type NOT NULL,
     description             TEXT,                          -- later aan te vullen
     photo_urls              TEXT[],                        -- later aan te vullen
-    duration_minutes        INT NOT NULL,                  -- 90 voor Art Attack Room
-    buffer_minutes          INT NOT NULL DEFAULT 0,         -- 60 voor Art Attack Room (opkuis/wissel)
+    duration_minutes        INT NOT NULL,                  -- 90 voor Action Painting
+    buffer_minutes          INT NOT NULL DEFAULT 0,         -- 60 voor Action Painting (opkuis/wissel)
     price                   NUMERIC(8,2),                    -- prijs per persoon; enkel gebruikt wanneer er GEEN service_party_pricing is (bv. Fluid Art = 45/pers)
     default_capacity        INT NOT NULL,                   -- enkel gebruikt als uses_room_assignment = false (10 voor Fluid Art)
-    uses_room_assignment    BOOLEAN NOT NULL DEFAULT FALSE,  -- true voor Art Attack Room
-    min_online_party_size   INT NOT NULL DEFAULT 1,          -- 2 voor Art Attack Room (geen boeking als "1")
-    max_online_party_size   INT,                             -- 7 voor Art Attack Room; groter = enkel via contact
+    uses_room_assignment    BOOLEAN NOT NULL DEFAULT FALSE,  -- true voor Action Painting
+    min_online_party_size   INT NOT NULL DEFAULT 1,          -- 2 voor Action Painting (geen boeking als "1")
+    max_online_party_size   INT,                             -- 7 voor Action Painting; groter = enkel via contact
     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------
--- Totaalprijs per groepsgrootte (bv. Art Attack Room).
+-- Totaalprijs per groepsgrootte (bv. Action Painting).
 -- Vervangt een vlakke "prijs per persoon" door een prijstrap:
 -- 2p=120, 3p=174, 4p=220, 5p=265, 6p=312, 7p=364.
 -- Ontbreekt een groepsgrootte hier voor een service, dan valt
@@ -100,7 +100,7 @@ CREATE TABLE service_party_pricing (
 
 -- ---------------------------------------------------------
 -- Terugkerende patronen
--- Bv. Art Attack Room woensdag 14u/16u30/19u (interval_weeks=1),
+-- Bv. Action Painting woensdag 14u/16u30/19u (interval_weeks=1),
 -- donderdag zelfde uren maar met end_date = 2026-08-31 (vakantiestop),
 -- Fluid Art dinsdag 19u met interval_weeks=2.
 -- ---------------------------------------------------------
@@ -247,7 +247,7 @@ CREATE TABLE discount_redemptions (
 );
 
 -- ---------------------------------------------------------
--- Roomtoewijzing per sessie (enkel voor Art Attack Room)
+-- Roomtoewijzing per sessie (enkel voor Action Painting)
 -- ---------------------------------------------------------
 CREATE TABLE room_bookings (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -395,7 +395,7 @@ ORDER BY bookings_count DESC;
 --   (<attack_room_id>, 2, 120), (<attack_room_id>, 3, 174), (<attack_room_id>, 4, 220),
 --   (<attack_room_id>, 5, 265), (<attack_room_id>, 6, 312), (<attack_room_id>, 7, 364);
 --
--- Art Attack Room recurrence_rules (voorbeeld, service_id in te vullen):
+-- Action Painting recurrence_rules (voorbeeld, service_id in te vullen):
 --   woensdag  14:00, 16:30, 19:00   (interval_weeks=1, end_date=NULL)
 --   donderdag 14:00, 16:30, 19:00   (interval_weeks=1, end_date='2026-08-31')
 --   vrijdag   13:30, 16:00          (interval_weeks=1, end_date=NULL)

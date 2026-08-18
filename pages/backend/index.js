@@ -49,7 +49,7 @@ function timeToMinutes(hhmm) {
 }
 
 // Wijst elk event van een dag een kolom toe zodat events die elkaar in tijd
-// overlappen (bv. 3 boekingen van Art Attack Room, elk in een andere room,
+// overlappen (bv. 3 boekingen van Action Painting, elk in een andere room,
 // exact op hetzelfde tijdstip) netjes naast elkaar komen te staan i.p.v.
 // volledig over elkaar heen (wat voorheen gebeurde — enkel het laatste event
 // in de lijst was dan nog zichtbaar/klikbaar). Standaard greedy
@@ -88,7 +88,7 @@ function layoutDayEvents(dayEvents) {
   return items;
 }
 
-// Bouwt de vaste room-kolommen (A/M/VL/VR) voor Art Attack Room-tijdsloten op
+// Bouwt de vaste room-kolommen (A/M/VL/VR) voor Action Painting-tijdsloten op
 // een dag, zoals in het referentiescherm dat Robin doorstuurde: elke room
 // heeft altijd zijn eigen kolom, ongeacht hoeveel er op dat moment effectief
 // geboekt zijn. Diensten zonder roomtoewijzing (Fluid Art) en persoonlijke
@@ -135,7 +135,7 @@ function buildRoomGrid(dayEvents, roomOrder) {
 
 function serviceLabel(code) {
   if (code === "fluid_art") return "Fluid Art";
-  if (code === "art_attack_room") return "Art Attack Room";
+  if (code === "action_painting") return "Action Painting";
   return code;
 }
 
@@ -442,7 +442,7 @@ export default function Backend() {
   function fetchCloseSlots(dateISO) {
     if (!dateISO) { setCloseSlots([]); return; }
     setCloseLoadingSlots(true);
-    fetch(`/api/availability?service=art_attack_room&date=${dateISO}`)
+    fetch(`/api/availability?service=action_painting&date=${dateISO}`)
       .then(r => r.json())
       .then(d => setCloseSlots(d.slots || []))
       .finally(() => setCloseLoadingSlots(false));
@@ -1168,7 +1168,7 @@ export default function Backend() {
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitClose}>
             <h3>Room(s) sluiten</h3>
             <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
-              Enkel van toepassing op Art Attack Room. Een room met een bestaande klantboeking
+              Enkel van toepassing op Action Painting. Een room met een bestaande klantboeking
               wordt nooit overschreven.
             </p>
 

@@ -1,6 +1,6 @@
 const store = require("../../lib/store-sql");
 
-// GET /api/availability-month?service=art_attack_room&year=2026&month=7&partySize=2
+// GET /api/availability-month?service=action_painting&year=2026&month=7&partySize=2
 // `month` is 0-based (JS Date-conventie, zoals viewMonth in de widget).
 // Geeft enkel een lijst ISO-datums terug die minstens 1 boekbaar tijdstip
 // hebben — voor het groen markeren van dagen in de maandkalender. Nooit

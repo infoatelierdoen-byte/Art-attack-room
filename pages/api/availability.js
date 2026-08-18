@@ -1,6 +1,6 @@
 const store = require("../../lib/store-sql");
 
-// GET /api/availability?service=art_attack_room&date=2026-08-05&partySize=4
+// GET /api/availability?service=action_painting&date=2026-08-05&partySize=4
 // Geeft nooit roomdetails terug — enkel of een tijdslot boekbaar is.
 export default async function handler(req, res) {
   if (req.method !== "GET") {

@@ -6,8 +6,8 @@ const { requireStaff } = require("../../../lib/auth");
 //         allDay (bool), reason }
 //
 // Sluit één room, of alle rooms (allRooms=true), voor één tijdslot (start)
-// of de volledige dag (allDay=true) — enkel van toepassing op Art Attack
-// Room (de enige dienst met roomtoewijzing). Zie lib/store-sql.js: closeRoom().
+// of de volledige dag (allDay=true) — enkel van toepassing op Action
+// Painting (de enige dienst met roomtoewijzing). Zie lib/store-sql.js: closeRoom().
 // Een room die al een klantboeking heeft voor dat tijdslot wordt nooit
 // overschreven (ON CONFLICT DO NOTHING in closeRoom()).
 export default async function handler(req, res) {

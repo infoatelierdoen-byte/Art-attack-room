@@ -57,27 +57,27 @@ async function main() {
     log("Fluid Art price is 60/person", fluid && fluid.pricePerPerson === 60, JSON.stringify(fluid));
 
     // --- Test 1: manual gift card, fully covers a booking (immediate paid, no Mollie) ---
-    // €150 op de bon: Art Attack Room 2p (€120) volledig dekken, dan blijft
+    // €150 op de bon: Action Painting 2p (€120) volledig dekken, dan blijft
     // €30 over voor een gedeeltelijke dekking van de Fluid Art-boeking verderop.
     const card1 = await store.createManualGiftCard({
       amount: 150, purchaserName: "Test Koper", purchaserEmail: "koper@test.be", note: "test"
     });
     log("createManualGiftCard returns active card w/ code", card1.status === "active" && /^AAR-/.test(card1.code), card1.code);
 
-    // Find a bookable Art Attack Room slot in the near future.
+    // Find a bookable Action Painting slot in the near future.
     const today = new Date();
     let bookingDateISO = null, bookingSlot = null;
     for (let i = 1; i <= 21 && !bookingSlot; i++) {
       const d = new Date(today); d.setDate(d.getDate() + i);
       const iso = d.toISOString().slice(0, 10);
-      const avail = await store.getAvailability("art_attack_room", iso, 2);
+      const avail = await store.getAvailability("action_painting", iso, 2);
       const bookable = avail.find(s => s.bookable);
       if (bookable) { bookingDateISO = iso; bookingSlot = bookable.start; }
     }
-    log("Found a bookable Art Attack Room slot", !!bookingSlot, `${bookingDateISO} ${bookingSlot}`);
+    log("Found a bookable Action Painting slot", !!bookingSlot, `${bookingDateISO} ${bookingSlot}`);
 
     const { booking: b1, payment: p1 } = await store.createBooking({
-      serviceCode: "art_attack_room", dateISO: bookingDateISO, start: bookingSlot, partySize: 2,
+      serviceCode: "action_painting", dateISO: bookingDateISO, start: bookingSlot, partySize: 2,
       customer: { name: "Klant Een", email: "klant1@test.be", phone: "0470000001", birthDate: "1990-01-01" },
       note: "", termsAccepted: true, marketingOptIn: false,
       giftCardCode: card1.code

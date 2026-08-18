@@ -32,13 +32,13 @@ async function main() {
 
     const store = require(path.join(PROJECT, "lib/store-sql.js"));
 
-    // Find a bookable Art Attack Room slot.
+    // Find a bookable Action Painting slot.
     const today = new Date();
     let dateISO = null, slot = null;
     for (let i = 1; i <= 21 && !slot; i++) {
       const d = new Date(today); d.setDate(d.getDate() + i);
       const iso = d.toISOString().slice(0, 10);
-      const avail = await store.getAvailability("art_attack_room", iso, 2);
+      const avail = await store.getAvailability("action_painting", iso, 2);
       const bookable = avail.find(s => s.bookable);
       if (bookable) { dateISO = iso; slot = bookable.start; }
     }
@@ -46,7 +46,7 @@ async function main() {
 
     // Test 1: reserveOnly=true manual booking never touches Mollie and stays pending.
     const { booking: b1 } = await store.createManualBooking({
-      serviceCode: "art_attack_room", dateISO, start: slot, partySize: 2,
+      serviceCode: "action_painting", dateISO, start: slot, partySize: 2,
       customer: { name: "Reservering Klant", email: "reserve@test.be", phone: "0470000009" },
       note: "belt later terug", paymentMethod: "cash", reserveOnly: true,
       invoiceRequested: true, invoiceDetails: { vatNumber: "BE0123456789", companyName: "Test BV" }
@@ -79,12 +79,12 @@ async function main() {
       const d = new Date(today); d.setDate(d.getDate() + i);
       const iso = d.toISOString().slice(0, 10);
       if (iso === dateISO) continue;
-      const avail = await store.getAvailability("art_attack_room", iso, 2);
+      const avail = await store.getAvailability("action_painting", iso, 2);
       const bookable = avail.find(s => s.bookable);
       if (bookable) { b2DateISO = iso; b2Slot = bookable.start; }
     }
     const { booking: b2 } = await store.createBooking({
-      serviceCode: "art_attack_room", dateISO: b2DateISO, start: b2Slot, partySize: 2,
+      serviceCode: "action_painting", dateISO: b2DateISO, start: b2Slot, partySize: 2,
       customer: { name: "Online Klant", email: "online2@test.be", phone: "0470000010", birthDate: "1990-01-01" },
       note: "", termsAccepted: true, marketingOptIn: false
     });

@@ -51,12 +51,12 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   "gematerialiseerd": concrete rijen in `sessions` worden aangemaakt zodra
   een datum voor het eerst opgevraagd wordt, idempotent (geen dubbels bij
   herhaald opvragen).
-- **Prijslogica**: de prijstrap voor Art Attack Room (2p=€120 t.e.m. 7p=€364,
+- **Prijslogica**: de prijstrap voor Action Painting (2p=€120 t.e.m. 7p=€364,
   nooit per persoon) komt rechtstreeks uit `service_party_pricing`; Fluid Art
   gebruikt de vaste prijs per persoon uit `services.price`. Foutmeldingen
   voor groepen buiten de toegelaten online-grootte zijn DB-gedreven
   (`min_online_party_size`/`max_online_party_size`).
-- **Vast uurrooster**: sessies (Art Attack Room: wo/do/vr/za/zo op de
+- **Vast uurrooster**: sessies (Action Painting: wo/do/vr/za/zo op de
   afgesproken uren, met de donderdag-cutoff op 31/08; Fluid Art:
   tweewekelijks op dinsdag 19u) worden berekend uit `recurrence_rules` in de
   database (`db/seed.sql`), niet uit een hardcoded lijst.
@@ -225,7 +225,7 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   alle boekingen in de zichtbare week in 1 PDF. Geen vervanging van de
   Billit-verzamelfactuur, enkel een leesbaar exportbestand.
 - **BELANGRIJKE BUGFIX — dagen naast de ankerdatum kregen nooit sessies**
-  (`lib/store-sql.js: ruleAppliesOn()`): alle Art Attack Room-weekdagregels
+  (`lib/store-sql.js: ruleAppliesOn()`): alle Action Painting-weekdagregels
   delen dezelfde `anchor_date` (een woensdag) in `db/seed.sql`. De oude
   check eiste dat het aantal dagen sinds die ankerdatum deelbaar was door 7
   — dat klopte toevallig voor woensdag, maar voor donderdag/vrijdag/
@@ -241,7 +241,7 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   Admin): voor een boekingslijst-export uit Wix Bookings. Blokkeert de
   betrokken tijdsloten in dit systeem (voorkomt dubbele boekingen via de
   widget) en zet de klanten in de database. Geannuleerde Wix-boekingen
-  worden overgeslagen. Groepsgrootte bij Art Attack Room staat vast op 2
+  worden overgeslagen. Groepsgrootte bij Action Painting staat vast op 2
   (bewuste keuze, juli 2026 — de CSV-export geeft geen betrouwbaar aantal
   personen door, enkel het aantal "rooms" dat altijd 1 is); bij Fluid Art
   wordt "Bezette plaatsen" wel als het echte aantal gebruikt. Rijen op een
@@ -254,6 +254,10 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   boekingslijst (85 rijen): na de bugfix hierboven importeerden 53 rijen
   correct, de overige 32 zijn tijdstippen buiten het vaste uurrooster
   (grotendeels al voorbije data, een aantal toekomstige nog te herbekijken).
+  Wix zelf noemt deze dienst in zijn export nog steeds "Art Attack Room"
+  (dat is Wix's eigen naam, los van onze hernoeming naar Action Painting
+  hieronder) — `wixImport.js` vertaalt dat automatisch naar de juiste,
+  huidige servicecode, dus een latere herimport blijft gewoon werken.
 - **BUGFIX — annuleren met een gedeeltelijke terugbetaling faalde**
   (`lib/store-sql.js: cancelBooking()`): de UPDATE-query gebruikte dezelfde
   parameter (`$3`, het terugbetaalde bedrag) zowel als kolomwaarde als in een
@@ -292,6 +296,21 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   ruim onder de bestaande 900px-drempel in `pages/widget.js`) automatisch
   naar zijn compacte weergave, precies zoals bedoeld — dat is een bestaande
   responsive breakpoint, geen nieuwe code.
+- **Workshop hernoemd: "Art Attack Room" → "Action Painting"** (Robin, aug
+  2026): zelfde dienst, rooms, prijzen en rooster — enkel de naam veranderde,
+  overal waar klanten of medewerkers die zien (widget-tegel, boekingstabs,
+  admin-agenda, PDF-exports, foutmeldingen). "Art Attack Room" zelf blijft
+  bestaan als naam van de zaak (paginatitel, e-mailadres, e-mail-afzender) —
+  dat is bewust niet aangeraakt, enkel de workshop zelf kreeg een nieuwe
+  naam. Bestaande live database: draai eenmalig
+  `db/migrations/003_rename_action_painting.sql` (verandert enkel de naam,
+  bestaande boekingen/sessies/facturen blijven ongemoeid want die verwijzen
+  naar de dienst via een vaste id). Een latere Wix-CSV-herimport blijft ook
+  gewoon werken: Wix noemt de dienst in zijn eigen export nog steeds "Art
+  Attack Room", `lib/wixImport.js` vertaalt dat automatisch naar de huidige
+  naam. De cadeaubon-tegel in de widget-landing staat voorlopig nog op de
+  derde plek (i.p.v. een eigen Spin Art-tegel) — Spin Art is nog niet live;
+  bewuste keuze om daar nu niets aan te doen tot die workshop klaar is.
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief
@@ -421,7 +440,7 @@ curl -X POST "https://api.sandbox.billit.be/v1/orders" \
       "CountryCode": "BE"
     },
     "OrderLines": [
-      {"Quantity": 1, "UnitPriceExcl": 100.00, "Description": "Art Attack Room workshop (test)", "VATPercentage": 21}
+      {"Quantity": 1, "UnitPriceExcl": 100.00, "Description": "Action Painting workshop (test)", "VATPercentage": 21}
     ]
   }'
 ```
@@ -683,13 +702,13 @@ via Neon's SQL Editor:
 UPDATE services SET price = 60.00 WHERE name = 'Fluid Art';
 ```
 
-Voor de prijstrap van Art Attack Room (per groepsgrootte) zou dat zijn:
+Voor de prijstrap van Action Painting (per groepsgrootte) zou dat zijn:
 
 ```sql
 UPDATE service_party_pricing spp
 SET total_price = 999
 FROM services s
-WHERE spp.service_id = s.id AND s.name = 'Art Attack Room' AND spp.party_size = 4; -- pas party_size en bedrag aan
+WHERE spp.service_id = s.id AND s.name = 'Action Painting' AND spp.party_size = 4; -- pas party_size en bedrag aan
 ```
 
 ## Cadeaubonnen importeren
@@ -719,6 +738,7 @@ db/
   seed.sql                 referentiedata: rooms, diensten, prijstrap, uurrooster
   import-gift-cards.sql    eenmalige import van de 355 bestaande cadeaubonnen (Wix + FareHarbor)
   migrations/002_add_staff_shifts.sql  eenmalig uit te voeren tegen een bestaande live-database
+  migrations/003_rename_action_painting.sql  idem, hernoemt de workshop op een bestaande live-database
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
   store-sql.js       de echte, SQL-gebaseerde implementatie (in gebruik door de API)

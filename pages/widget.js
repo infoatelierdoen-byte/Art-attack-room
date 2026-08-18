@@ -73,7 +73,7 @@ export default function Widget() {
   const [desktopLanding, setDesktopLanding] = useState(true);
 
   const [services, setServices] = useState([]);
-  const [serviceCode, setServiceCode] = useState("art_attack_room");
+  const [serviceCode, setServiceCode] = useState("action_painting");
   const [partySize, setPartySize] = useState(2);
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -226,22 +226,28 @@ export default function Widget() {
     <div className={`abr-page ${desktopLanding ? "abr-mode-landing" : "abr-mode-booking"}`}>
       <style>{layoutCss}</style>
 
-      {/* Landingspagina met 3 foto-tegels — enkel zichtbaar op desktop (zie
-          media query in layoutCss). Op mobiel altijd verborgen, daar ga je
-          meteen naar het boekingsscherm hieronder. */}
+      {/* Landingspagina met 3 foto-tegels — zichtbaar op elke schermbreedte
+          (dus ook in de pop-up-embed, zie public/embed.js): elke klant die
+          boekt ziet zo altijd eerst alle workshops, ongeacht welke hij
+          uiteindelijk kiest ("follow-through", Robin, aug 2026). Enkel de
+          LAYOUT verschilt per breedte (rij op desktop vanaf 900px, kolom
+          daaronder — zie media query in layoutCss), niet of dit scherm
+          getoond wordt. Spin Art is nog niet live: de derde tegel is
+          voorlopig de cadeaubon, en wordt vervangen zodra Spin Art gelanceerd
+          wordt. */}
       <div className="abr-landing">
         <div
           className="abr-tile"
           role="button" tabIndex={0}
-          onClick={() => { setServiceCode("art_attack_room"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
-          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("art_attack_room"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
+          onClick={() => { setServiceCode("action_painting"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("action_painting"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
         >
           {/* Plaatshouder — vervang door <img> zodra er een echte foto is. */}
           <div className="abr-tile-bg abr-tile-bg-attack">
             <span className="abr-tile-placeholder-label">Foto volgt</span>
           </div>
           <div className="abr-tile-overlay">
-            <p className="abr-tile-title">Art Attack Room</p>
+            <p className="abr-tile-title">Action Painting</p>
             <p className="abr-tile-sub">Graffiti-ervaring</p>
           </div>
         </div>
@@ -262,6 +268,10 @@ export default function Widget() {
           </div>
         </div>
 
+        {/* Tijdelijke derde tegel zolang Spin Art nog niet live is (Robin,
+            aug 2026) — te vervangen door een echte Spin Art-tegel (zelfde
+            opbouw als de twee hierboven, serviceCode "spin_art") zodra die
+            dienst effectief in de database staat. */}
         <a className="abr-tile" href="/widget/cadeaubon">
           <div className="abr-tile-bg abr-tile-bg-gift">
             <GiftTileArt />
@@ -291,6 +301,9 @@ export default function Widget() {
           <p className="abr-hero-mobile-title">{currentService?.label || "Boek je workshop"}</p>
           <div className="abr-hero-text">
             <h1>Boek je workshop</h1>
+            {/* "Art Attack Room" hier = de zaak/het merk (waar alle workshops
+                doorgaan), niet de workshop zelf — die heet nu Action
+                Painting. Zie README "Workshop hernoemd". */}
             <p style={{ ...styles.note, marginBottom: 8 }}>
               Beleef een unieke, creatieve namiddag bij Art Attack Room.
             </p>
@@ -331,7 +344,7 @@ export default function Widget() {
               </div>
               {pricePerPerson !== null && <span style={styles.price}>€{pricePerPerson}pp</span>}
             </div>
-            {serviceCode === "art_attack_room" && (
+            {serviceCode === "action_painting" && (
               <p style={styles.note}>
                 Groepen groter dan 7? Mail naar{" "}
                 <a href="mailto:artattackroom@gmail.com" style={{ color: "var(--accent)" }}>artattackroom@gmail.com</a>.
