@@ -30,10 +30,24 @@ function buildMonthGrid(year, month) {
   return cells;
 }
 
+// Sfeerfoto per dienst, getoond in de hero zodra een workshop gekozen is.
+// De bestanden staan in public/images/. Een dienst die hier niet in staat
+// toont gewoon de donkere achtergrond (.abr-hero-media in layoutCss).
+const HERO_IMAGES = {
+  action_painting: {
+    src: "/images/action-painting.jpg",
+    alt: "Gezin in witte overalls voor hun schilderij in de Action Painting-ruimte",
+  },
+  fluid_art: {
+    src: "/images/fluid-art.jpg",
+    alt: "Deelneemster houdt een net gegoten roze fluid art-canvas omhoog",
+  },
+};
+
 // Handgetekende cadeaubon-illustratie (geen echte foto — er is momenteel geen
 // AI-beeldgeneratie beschikbaar). Vervang gerust door een echte foto/AI-beeld:
 // gewoon de <GiftTileArt /> hieronder verwijderen en een <img> in de
-// .abr-tile-bg-gift div zetten, zie ook de andere twee tegels (Foto volgt).
+// .abr-tile-bg-gift div zetten, zoals bij de andere twee tegels.
 function GiftTileArt() {
   return (
     <svg viewBox="0 0 400 600" preserveAspectRatio="xMidYMid slice" style={{ width: "100%", height: "100%", display: "block" }}>
@@ -242,9 +256,13 @@ export default function Widget() {
           onClick={() => { setServiceCode("action_painting"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
           onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("action_painting"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
         >
-          {/* Plaatshouder — vervang door <img> zodra er een echte foto is. */}
           <div className="abr-tile-bg abr-tile-bg-attack">
-            <span className="abr-tile-placeholder-label">Foto volgt</span>
+            <img
+              src="/images/action-painting.jpg"
+              alt="Gezin in witte overalls voor hun schilderij in de Action Painting-ruimte"
+              className="abr-tile-img"
+              loading="eager"
+            />
           </div>
           <div className="abr-tile-overlay">
             <p className="abr-tile-title">Action Painting</p>
@@ -258,9 +276,13 @@ export default function Widget() {
           onClick={() => { setServiceCode("fluid_art"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); }}
           onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { setServiceCode("fluid_art"); setSelectedDate(null); setSelectedSlot(null); setDesktopLanding(false); } }}
         >
-          {/* Plaatshouder — vervang door <img> zodra er een echte foto is. */}
           <div className="abr-tile-bg abr-tile-bg-fluid">
-            <span className="abr-tile-placeholder-label">Foto volgt</span>
+            <img
+              src="/images/fluid-art.jpg"
+              alt="Deelneemster houdt een net gegoten roze fluid art-canvas omhoog"
+              className="abr-tile-img"
+              loading="eager"
+            />
           </div>
           <div className="abr-tile-overlay">
             <p className="abr-tile-title">Fluid Art</p>
@@ -289,11 +311,18 @@ export default function Widget() {
             <span className="abr-back-arrow">‹</span>
             <span className="abr-back-text">Kies een andere workshop</span>
           </button>
-          {/* Plaatshouder voor sfeerfoto — vervang de div hieronder later
-              gewoon door <img src="/foto.jpg" alt="..." className="abr-hero-media" />
-              zodra er echte foto's zijn. */}
+          {/* Sfeerfoto van de gekozen workshop. Diensten zonder eigen foto
+              (bv. Spin Art zodra die live gaat) vallen terug op de donkere
+              achtergrond uit layoutCss — voeg hier dan gewoon een regel toe
+              aan HERO_IMAGES bovenaan dit bestand. */}
           <div className="abr-hero-media">
-            <span className="abr-hero-media-label">Foto volgt</span>
+            {HERO_IMAGES[serviceCode] && (
+              <img
+                src={HERO_IMAGES[serviceCode].src}
+                alt={HERO_IMAGES[serviceCode].alt}
+                className="abr-hero-img"
+              />
+            )}
           </div>
           {/* Op mobiel: enkel deze titel over de foto, de volledige tekst
               hieronder (.abr-hero-text) is daar verborgen om de vaste
@@ -478,6 +507,10 @@ const layoutCss = `
   .abr-tile-bg-attack { background: linear-gradient(160deg, #3A2A22, #C1653A); display: flex; align-items: center; justify-content: center; }
   .abr-tile-bg-fluid { background: linear-gradient(160deg, #1E2A3A, #3D8BFF); display: flex; align-items: center; justify-content: center; }
   .abr-tile-bg-gift { background: #1C1C1F; }
+  /* De gradients hierboven blijven als achtergrond staan: die zie je zolang de
+     foto nog laadt (en als ze ooit zou ontbreken), zodat de tekst in
+     .abr-tile-overlay altijd leesbaar blijft. */
+  .abr-tile-img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
   .abr-tile-placeholder-label { color: rgba(255,255,255,0.55); font-size: 13px; border: 1.5px dashed rgba(255,255,255,0.3); padding: 10px 16px; border-radius: 8px; }
   .abr-tile-overlay { position: relative; z-index: 1; width: 100%; box-sizing: border-box; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 65%); }
   .abr-tile-title { color: #fff; font-size: 18px; font-weight: 500; margin: 0 0 4px; }
@@ -492,6 +525,7 @@ const layoutCss = `
   .abr-hero { position: sticky; top: 0; z-index: 5; height: 38vh; min-height: 210px; padding: 0; overflow: hidden; }
   .abr-hero-media { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 0; background: linear-gradient(135deg, #2A2A2E, #1C1C1F); display: flex; align-items: center; justify-content: center; }
   .abr-hero-media-label { color: var(--muted); font-size: 13px; }
+  .abr-hero-img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
   .abr-hero-mobile-title { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; margin: 0; padding: 16px; font-size: 19px; font-weight: 500; color: #fff; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 70%); }
   .abr-hero-text { display: none; }
 

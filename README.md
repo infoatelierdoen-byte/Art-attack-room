@@ -690,6 +690,33 @@ terracotta (`#C1653A`, was roze), en het lettertype naar
 [Quicksand](https://fonts.google.com/specimen/Quicksand) (Google Fonts,
 geladen via `pages/_document.js`) i.p.v. de standaard systeemfont.
 
+## Foto's vervangen of toevoegen
+
+De sfeerfoto's staan als gewone bestanden in `public/images/`:
+
+| Bestand | Waar zichtbaar |
+| --- | --- |
+| `action-painting.jpg` | Tegel "Action Painting" op de landingspagina + hero zodra die workshop gekozen is |
+| `fluid-art.jpg` | Tegel "Fluid Art" + hero van die workshop |
+
+Een foto vervangen = het bestand overschrijven onder dezelfde naam; er is geen
+build-stap of import nodig. Gebruik bij voorkeur een staande (portrait) foto:
+de tegels zijn hoog en smal op desktop, en de foto's worden met
+`object-fit: cover` bijgesneden vanuit het midden.
+
+Een foto toevoegen voor een nieuwe dienst (bv. Spin Art) gebeurt op twee
+plaatsen in `pages/widget.js`:
+
+1. `HERO_IMAGES` bovenaan het bestand — voeg een regel toe met de `code` van de
+   dienst als sleutel (`spin_art: { src: "/images/spin-art.jpg", alt: "..." }`).
+   Een dienst die hier niet in staat toont gewoon de donkere achtergrond, dus
+   je kan de tegel al live zetten voor de foto er is.
+2. De tegel zelf in de landingspagina — kopieer het blok van Fluid Art en
+   vervang de `serviceCode` en de `<img src>`.
+
+De cadeaubon-tegel gebruikt geen foto maar een getekende SVG (`GiftTileArt`);
+die tegel verdwijnt sowieso zodra Spin Art live gaat.
+
 ## Prijzen aanpassen op een bestaande database
 
 `db/seed.sql` is bewust idempotent (`ON CONFLICT DO NOTHING`) — handig om
@@ -772,5 +799,7 @@ pages/
   api/admin/staff-shifts/[id].js    personeelsplanning: bewerken (PATCH) / verwijderen (DELETE)
 public/
   embed.js                 pop-up-launcher om /widget op een externe website (Wix, later eigen site) te embedden
+  images/action-painting.jpg  sfeerfoto Action Painting (tegel + hero), zie "Foto's vervangen of toevoegen"
+  images/fluid-art.jpg        sfeerfoto Fluid Art (tegel + hero)
 vercel.json          cronjob-config voor de wekelijkse verzamelfactuur (Vercel-hosting)
 ```

@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const EmbeddedPostgres = require("embedded-postgres").default || require("embedded-postgres");
 
-const PROJECT = "/sessions/jolly-hopeful-bohr/mnt/outputs/booking-mvp";
+const PROJECT = __dirname;
 const DATA_DIR = "/tmp/embedded-pg-data-giftcard";
 
 function log(label, ok, extra) {
