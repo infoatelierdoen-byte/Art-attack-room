@@ -166,6 +166,24 @@ export default function Backend() {
   const [loginError, setLoginError] = useState("");
   const [loginSubmitting, setLoginSubmitting] = useState(false);
 
+  // Donkere modus — onafhankelijk van inloggen, voorkeur onthouden in
+  // localStorage zodat die overeind blijft na een herlaad. Standaard uit
+  // (huidige lichte thema), enkel client-side te lezen (geen window tijdens
+  // SSR/build), vandaar in een useEffect i.p.v. rechtstreeks in useState().
+  const [darkMode, setDarkMode] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("backendDarkMode") === "1") setDarkMode(true);
+    } catch { /* privénavigatie o.i.d. — dan gewoon standaard licht */ }
+  }, []);
+  function toggleDarkMode() {
+    setDarkMode(v => {
+      const next = !v;
+      try { localStorage.setItem("backendDarkMode", next ? "1" : "0"); } catch { /* zie hierboven */ }
+      return next;
+    });
+  }
+
   const [monday, setMonday] = useState(() => mondayOf(toISO(new Date())));
   const [events, setEvents] = useState([]);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
@@ -807,20 +825,20 @@ export default function Backend() {
 
   if (authRole === null) {
     return (
-      <div style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{css}</style>
-        <p style={{ color: "#7C7668" }}>Laden…</p>
+        <p style={{ color: "var(--admin-text-muted)" }}>Laden…</p>
       </div>
     );
   }
 
   if (authRole === "none") {
     return (
-      <div style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+      <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--admin-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
         <style>{css}</style>
         <form className="modal" style={{ width: 320 }} onSubmit={submitLogin}>
           <h3>Inloggen</h3>
-          <p style={{ fontSize: 13, color: "#7C7668" }}>Toegang tot de backoffice-agenda.</p>
+          <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>Toegang tot de backoffice-agenda.</p>
           <input
             required autoFocus type="password" placeholder="Wachtwoord"
             value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
@@ -835,12 +853,16 @@ export default function Backend() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--admin-bg)", color: "#20221F", fontFamily: "inherit" }}>
+    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--admin-bg)", color: "var(--admin-text)", fontFamily: "inherit" }}>
       <style>{css}</style>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--admin-line)" }}>
         <h1 style={{ fontSize: 20, margin: 0, color: "var(--admin-accent)" }}>Agenda</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 13, color: "#7C7668" }}>
+          <label className="theme-switch" title="Donkere modus">
+            <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} />
+            <span className="theme-switch-track"></span>
+          </label>
+          <span style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
             Ingelogd als {authRole === "admin" ? "Admin" : "Gast"}
           </span>
           <button className="nav-btn" onClick={logout}>Uitloggen</button>
@@ -1016,7 +1038,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setShowAddPersonal(false)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitPersonal}>
             <h3>Persoonlijke afspraak</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               Altijd privé en zonder klant of prijs — enkel een geblokkeerd tijdslot (bv. "Dokter").
             </p>
             <input required placeholder='Titel (bv. "Dokter")' value={personalForm.title}
@@ -1041,7 +1063,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setShowAddBooking(false)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitManual}>
             <h3>Boeking toevoegen</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               Voor een boeking die je zelf ingeeft (bv. na een telefoontje). Nooit via Mollie —
               kies hieronder hoe er (al dan niet) betaald werd. Verwacht je dat de details nog
               wijzigen? Vink "enkel reserveren" aan: dan wordt niets definitief (geen factuur,
@@ -1145,7 +1167,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setShowCloseRoom(false)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitClose}>
             <h3>Room(s) sluiten</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               Enkel van toepassing op Art Attack Room. Een room met een bestaande klantboeking
               wordt nooit overschreven.
             </p>
@@ -1212,7 +1234,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setShowAddExtra(false)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitExtra}>
             <h3>Extra sessie toevoegen</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               Voor een eenmalig extra tijdstip buiten het vaste uurrooster — bv. Fluid Art zit een
               week volzet, en je plant een extra sessie de week erna. Verschijnt meteen als
               boekbaar tijdstip in de klant-widget.
@@ -1334,7 +1356,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setConfirmTarget(null)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitConfirmBooking}>
             <h3>Reservering bevestigen</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               {confirmTarget.customer} — {serviceLabel(confirmTarget.service)}, {confirmTarget.partySize}p,{" "}
               {confirmTarget.dateISO} om {confirmTarget.start}
               {confirmTarget.amount != null && <> — €{confirmTarget.amount.toFixed(2)} te betalen</>}.
@@ -1365,7 +1387,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setDetailTarget(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Boekingsdetails</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               {detailTarget.customer} — {serviceLabel(detailTarget.service)}, {detailTarget.partySize}p
               {detailTarget.roomCode && <> — Room {detailTarget.roomCode}</>}
               <br />
@@ -1376,7 +1398,7 @@ export default function Backend() {
 
             {authRole === "admin" ? (
               <>
-                <p style={{ fontSize: 12, color: "#7C7668" }}>
+                <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
                   Annuleren maakt de room terug vrij voor dit tijdslot. Vul hieronder in hoeveel je
                   terugbetaalt aan de klant — volledig, gedeeltelijk (bv. annuleringskost ingehouden)
                   of niets. Het behouden bedrag telt nog mee in de wekelijkse omzetfactuur.
@@ -1436,7 +1458,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setRescheduleTarget(null)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitReschedule}>
             <h3>Boeking verplaatsen</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               {rescheduleTarget.customer} — {serviceLabel(rescheduleTarget.service)}, {rescheduleTarget.partySize}p.
               Huidig tijdstip: {rescheduleTarget.dateISO} om {rescheduleTarget.start}.
             </p>
@@ -1444,7 +1466,7 @@ export default function Backend() {
             <input required type="date" value={rescheduleDateISO} onChange={e => setRescheduleDateISO(e.target.value)} />
             <label className="field-label">Nieuw tijdstip</label>
             <input required type="time" value={rescheduleStart} onChange={e => setRescheduleStart(e.target.value)} />
-            <p style={{ fontSize: 12, color: "#7C7668" }}>
+            <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
               Klant, groepsgrootte, prijs en betaalstatus blijven ongewijzigd — enkel het tijdslot verandert.
               Kan enkel naar een tijdstip waar effectief een sessie gepland staat.
             </p>
@@ -1463,7 +1485,7 @@ export default function Backend() {
         <div className="modal-backdrop" onClick={() => setShowImport(false)}>
           <div className="modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
             <h3>Boekingen importeren (CSV)</h3>
-            <p style={{ fontSize: 13, color: "#7C7668" }}>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
               Voor een boekingslijst uit Wix Bookings (CSV-export). Blokkeert de betrokken tijdsloten
               hier zodat er niet dubbel geboekt kan worden via de widget, en zet de klanten in de
               database. Geannuleerde Wix-boekingen worden overgeslagen. Groepsgrootte bij Art Attack
@@ -1473,7 +1495,7 @@ export default function Backend() {
               uploaden — bestaande boekingen worden niet dubbel aangemaakt.
             </p>
             <input type="file" accept=".csv" onChange={handleImportFile} />
-            {importFileName && <p style={{ fontSize: 12, color: "#7C7668" }}>Gekozen: {importFileName}</p>}
+            {importFileName && <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>Gekozen: {importFileName}</p>}
             {importError && <p className="error-text">{importError}</p>}
 
             {importResult && (
@@ -1481,7 +1503,7 @@ export default function Backend() {
                 <p style={{ fontWeight: 700 }}>
                   {importResult.results.imported || 0} geïmporteerd van {importResult.totalRows} rijen.
                 </p>
-                <p style={{ color: "#7C7668" }}>
+                <p style={{ color: "var(--admin-text-muted)" }}>
                   {importResult.results.duplicate || 0} al bestaand (overgeslagen) ·{" "}
                   {importResult.results.no_session || 0} buiten uurrooster ·{" "}
                   {importResult.results.full || 0} tijdslot volzet ·{" "}
@@ -1563,71 +1585,77 @@ export default function Backend() {
 }
 
 const css = `
-  .role-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid var(--admin-line); background: #fff; }
+  .theme-switch { position: relative; display: inline-block; width: 38px; height: 21px; vertical-align: middle; }
+  .theme-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .theme-switch-track { position: absolute; inset: 0; background: var(--admin-line); border-radius: 999px; transition: background 0.15s; cursor: pointer; }
+  .theme-switch-track::before { content: ""; position: absolute; width: 15px; height: 15px; left: 3px; top: 3px; background: var(--admin-surface); border-radius: 50%; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+  .theme-switch input:checked ~ .theme-switch-track { background: var(--admin-accent); }
+  .theme-switch input:checked ~ .theme-switch-track::before { transform: translateX(17px); }
+  .role-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid var(--admin-line); background: var(--admin-surface); }
   .role-btn.active { background: var(--admin-accent); color: #fff; border-color: var(--admin-accent); }
-  .nav-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--admin-line); background: #fff; }
+  .nav-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--admin-line); background: var(--admin-surface); color: var(--admin-text); }
   .add-btn { padding: 8px 14px; border-radius: 8px; border: none; background: var(--admin-accent); color: #fff; font-weight: 700; }
-  .add-btn.secondary { background: #fff; color: var(--admin-accent); border: 1px solid var(--admin-accent); }
+  .add-btn.secondary { background: var(--admin-surface); color: var(--admin-accent); border: 1px solid var(--admin-accent); }
   .add-btn:disabled { opacity: 0.5; }
   .agenda-layout { display: flex; }
   .sidebar { width: 216px; flex-shrink: 0; padding: 18px 16px; border-right: 1px solid var(--admin-line); }
   .mini-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .mini-cal-title { font-weight: 700; font-size: 14px; }
-  .mini-nav-btn { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--admin-line); background: #fff; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+  .mini-nav-btn { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--admin-line); background: var(--admin-surface); color: var(--admin-text); font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
   .mini-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-  .mini-cal-dow { text-align: center; font-size: 10px; color: #7C7668; padding: 4px 0; }
-  .mini-cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: transparent; font-size: 12px; color: #20221F; padding: 0; }
-  .mini-cal-day:hover { background: #F1EEE7; }
+  .mini-cal-dow { text-align: center; font-size: 10px; color: var(--admin-text-muted); padding: 4px 0; }
+  .mini-cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: transparent; font-size: 12px; color: var(--admin-text); padding: 0; }
+  .mini-cal-day:hover { background: var(--admin-hover); }
   .mini-cal-day.outside { color: #C7C2B6; }
   .mini-cal-day.in-week { background: #FBE9E1; }
   .mini-cal-day.today { background: var(--admin-accent); color: #fff; font-weight: 700; }
   .week-body { display: flex; padding: 0 20px 40px; gap: 0; }
   .week-time-col { width: 56px; padding-top: 34px; }
-  .hour-label { height: ${HOUR_PX}px; font-size: 11px; color: #7C7668; }
+  .hour-label { height: ${HOUR_PX}px; font-size: 11px; color: var(--admin-text-muted); }
   .week-days { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; gap: 6px; }
-  .week-day-col { border: 1px solid var(--admin-line); border-radius: 10px; overflow: hidden; background: #fff; }
+  .week-day-col { border: 1px solid var(--admin-line); border-radius: 10px; overflow: hidden; background: var(--admin-surface); }
   .week-day-head { text-align: center; font-size: 12px; font-weight: 700; padding: 8px 0; border-bottom: 1px solid var(--admin-line); }
-  .staff-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 6px; border-bottom: 1px solid var(--admin-line); background: #FAF8F4; }
-  .staff-chip { padding: 2px 7px; border-radius: 999px; border: 1px solid var(--admin-accent); background: #fff; color: var(--admin-accent); font-size: 10px; line-height: 1.6; white-space: nowrap; }
+  .staff-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 6px; border-bottom: 1px solid var(--admin-line); background: var(--admin-subtle); }
+  .staff-chip { padding: 2px 7px; border-radius: 999px; border: 1px solid var(--admin-accent); background: var(--admin-surface); color: var(--admin-accent); font-size: 10px; line-height: 1.6; white-space: nowrap; }
   .staff-chip-time { opacity: 0.75; }
-  .staff-chip.add { border-style: dashed; color: #7C7668; border-color: #C7C2B6; font-weight: 700; padding: 2px 8px; }
-  .staff-chip.add:hover { background: #F1EEE7; }
-  .week-day-body { position: relative; background-image: repeating-linear-gradient(to bottom, #F1EEE7 0, #F1EEE7 1px, transparent 1px, transparent ${HOUR_PX}px); }
+  .staff-chip.add { border-style: dashed; color: var(--admin-text-muted); border-color: var(--admin-line); font-weight: 700; padding: 2px 8px; }
+  .staff-chip.add:hover { background: var(--admin-hover); }
+  .week-day-body { position: relative; background-image: repeating-linear-gradient(to bottom, var(--admin-line) 0, var(--admin-line) 1px, transparent 1px, transparent ${HOUR_PX}px); }
   .cal-event { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 11px; overflow: hidden; box-sizing: border-box; }
   .cal-event-label { font-weight: 700; }
   .cal-event-sub { opacity: 0.8; }
   .cal-event.attack { background: #FBE9E1; border-left: 3px solid var(--admin-accent); }
   .cal-event.fluid { background: var(--fluid-bg); border-left: 3px solid var(--fluid); }
   .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); }
-  .cal-event.personal { background: var(--private-bg); border-left: 3px solid #7C7668; font-style: italic; }
-  .cal-event.private { background: var(--private-bg); border-left: 3px solid #7C7668; }
-  .cal-event.pending-reservation { border: 1px dashed #7C7668; border-left-width: 3px; opacity: 0.85; }
+  .cal-event.personal { background: var(--private-bg); border-left: 3px solid var(--admin-text-muted); font-style: italic; }
+  .cal-event.private { background: var(--private-bg); border-left: 3px solid var(--admin-text-muted); }
+  .cal-event.pending-reservation { border: 1px dashed var(--admin-text-muted); border-left-width: 3px; opacity: 0.85; }
   .cal-event.clickable { cursor: pointer; }
   .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
   .menu-backdrop { position: fixed; inset: 0; z-index: 20; background: transparent; }
-  .actions-menu { position: absolute; top: 40px; right: 0; z-index: 21; background: #fff; border: 1px solid var(--admin-line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.12); padding: 6px; display: flex; flex-direction: column; min-width: 200px; }
-  .actions-menu button, .actions-menu a { display: block; text-align: left; padding: 8px 10px; border: none; background: none; border-radius: 6px; font-size: 13px; color: #20221F; text-decoration: none; cursor: pointer; }
-  .actions-menu button:hover, .actions-menu a:hover { background: #F1EEE7; }
+  .actions-menu { position: absolute; top: 40px; right: 0; z-index: 21; background: var(--admin-surface); border: 1px solid var(--admin-line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.12); padding: 6px; display: flex; flex-direction: column; min-width: 200px; }
+  .actions-menu button, .actions-menu a { display: block; text-align: left; padding: 8px 10px; border: none; background: none; border-radius: 6px; font-size: 13px; color: var(--admin-text); text-decoration: none; cursor: pointer; }
+  .actions-menu button:hover, .actions-menu a:hover { background: var(--admin-hover); }
   .actions-menu-divider { height: 1px; background: var(--admin-line); margin: 4px 2px; }
   .finder-results { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-  .finder-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; background: #fff; }
+  .finder-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--admin-line); border-radius: 8px; background: var(--admin-surface); }
   .finder-row-main { font-size: 13px; font-weight: 700; }
-  .finder-row-sub { font-size: 11px; color: #7C7668; }
+  .finder-row-sub { font-size: 11px; color: var(--admin-text-muted); }
   .cal-room-cell { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 10px; overflow: hidden; box-sizing: border-box; border: 1px solid var(--admin-line); }
-  .cal-room-cell.free { background: #fff; }
+  .cal-room-cell.free { background: var(--admin-surface); }
   .cal-room-cell.closed { background: repeating-linear-gradient(45deg, #EDEAE2, #EDEAE2 5px, #E1DCD0 5px, #E1DCD0 10px); color: #8A8375; }
   .cal-room-label { font-weight: 700; }
   .cal-room-sub { opacity: 0.75; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
-  .modal { background: #fff; padding: 20px; border-radius: 12px; width: 340px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  .modal input, .modal select, .modal textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); font-family: inherit; width: 100%; box-sizing: border-box; }
-  .field-label { font-size: 12px; color: #7C7668; margin-top: 4px; }
-  .muted-text { font-size: 12px; color: #7C7668; margin: 4px 0; }
+  .modal { background: var(--admin-surface); color: var(--admin-text); padding: 20px; border-radius: 12px; width: 340px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .modal input, .modal select, .modal textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); background: var(--admin-surface); color: var(--admin-text); font-family: inherit; width: 100%; box-sizing: border-box; }
+  .field-label { font-size: 12px; color: var(--admin-text-muted); margin-top: 4px; }
+  .muted-text { font-size: 12px; color: var(--admin-text-muted); margin: 4px 0; }
   .error-text { color: #C0392B; font-size: 13px; }
   .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
   .checkbox-row input { width: auto; }
   .slot-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-  .slot-chip { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--admin-line); background: #fff; font-size: 13px; width: auto; }
+  .slot-chip { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--admin-line); background: var(--admin-surface); color: var(--admin-text); font-size: 13px; width: auto; }
   .slot-chip.selected { background: var(--admin-accent); color: #fff; border-color: var(--admin-accent); }
   .slot-chip.disabled { opacity: 0.4; }
   .gift-card-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin-top: 6px; }

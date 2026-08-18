@@ -13,6 +13,33 @@
   --fluid: #3D8BFF;
   --fluid-bg: #E9F1FF;
   --private-bg: #EDEAE3;
+
+  /* Structurele oppervlaktes/tekst van de backoffice-agenda (/backend) —
+     apart van de kleuraccenten hierboven (die blijven pastel/gelijk in beide
+     standen, zoals de event-kleurtjes; enkel de "structuur" wisselt mee). */
+  --admin-text: #20221F;
+  --admin-text-muted: #7C7668;
+  --admin-surface: #FFFFFF;
+  --admin-hover: #F1EEE7;
+  --admin-subtle: #FAF8F4;
+}
+
+/* Donkere modus voor /backend — geactiveerd via de slider in de header,
+   voorkeur onthouden in localStorage (zie pages/backend/index.js). Enkel de
+   structurele kleuren wisselen; de pastel event-/statuskleurtjes (Fluid Art,
+   Art Attack Room, cadeaubon-status, ...) blijven bewust ongewijzigd — die
+   blijven prima leesbaar op een donkere achtergrond, net als in de meeste
+   agenda-apps met een donkere modus. */
+[data-theme="dark"] {
+  --admin-bg: #1C1C1F;
+  --admin-panel: #26262B;
+  --admin-accent: #E38156;
+  --admin-line: #3A3A40;
+  --admin-text: #F0EDE6;
+  --admin-text-muted: #A8A39A;
+  --admin-surface: #26262B;
+  --admin-hover: #33333A;
+  --admin-subtle: #232326;
 }
 
 * { box-sizing: border-box; }
