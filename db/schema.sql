@@ -32,6 +32,26 @@ CREATE TABLE staff_users (
 );
 
 -- ---------------------------------------------------------
+-- Personeelsplanning: wie werkt wanneer, en van/tot hoe laat.
+-- Bewust volledig los van staff_users/de login (geen account per
+-- medewerker nodig om in het rooster te verschijnen) en bewust GEEN
+-- terugkerend patroon (Robin, aug 2026: werkuren verschillen te veel per
+-- week om een vast patroon zinvol te maken) — elke dag apart ingevuld,
+-- rechtstreeks zichtbaar in de bestaande weekagenda.
+-- ---------------------------------------------------------
+CREATE TABLE staff_shifts (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    work_date   DATE NOT NULL,
+    staff_name  TEXT NOT NULL,
+    start_time  TIME NOT NULL,
+    end_time    TIME NOT NULL,
+    note        TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_staff_shifts_date ON staff_shifts(work_date);
+
+-- ---------------------------------------------------------
 -- Rooms (fysieke ruimtes in het pand)
 -- Enkel relevant voor diensten met uses_room_assignment = true.
 -- ---------------------------------------------------------

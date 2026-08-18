@@ -154,6 +154,8 @@ const EMPTY_EXTRA_FORM = { serviceCode: "", dateISO: "", start: "", capacity: ""
 
 const EMPTY_GIFT_CARD_FORM = { amount: "", purchaserName: "", purchaserEmail: "", note: "" };
 
+const EMPTY_STAFF_FORM = { id: null, dateISO: "", staffName: "", start: "", end: "", note: "" };
+
 export default function Backend() {
   // authRole: null = nog aan het checken, "none" = niet ingelogd,
   // "admin"/"guest" = ingelogd. Komt nu van de server (sessie-cookie na
@@ -230,11 +232,23 @@ export default function Backend() {
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
 
+  const [staffShifts, setStaffShifts] = useState([]);
+  const [staffForm, setStaffForm] = useState(EMPTY_STAFF_FORM);
+  const [showStaffShift, setShowStaffShift] = useState(false);
+  const [staffError, setStaffError] = useState("");
+  const [staffSubmitting, setStaffSubmitting] = useState(false);
+
   function load(week) {
     setLoading(true);
-    fetch(`/api/admin/sessions?week=${week}`)
-      .then(r => r.json())
-      .then(d => { setMonday(d.monday); setEvents(d.events); })
+    Promise.all([
+      fetch(`/api/admin/sessions?week=${week}`).then(r => r.json()),
+      fetch(`/api/admin/staff-shifts?week=${week}`).then(r => r.json())
+    ])
+      .then(([sessionsData, shiftsData]) => {
+        setMonday(sessionsData.monday);
+        setEvents(sessionsData.events);
+        setStaffShifts(shiftsData.shifts || []);
+      })
       .finally(() => setLoading(false));
   }
 
@@ -696,6 +710,67 @@ export default function Backend() {
     }
   }
 
+  // --- Personeelsplanning ---
+
+  function openAddStaffShift(dateISO) {
+    setStaffForm({ ...EMPTY_STAFF_FORM, dateISO });
+    setStaffError("");
+    setShowStaffShift(true);
+  }
+
+  function openEditStaffShift(shift) {
+    setStaffForm({ id: shift.id, dateISO: shift.dateISO, staffName: shift.staffName, start: shift.start, end: shift.end, note: shift.note || "" });
+    setStaffError("");
+    setShowStaffShift(true);
+  }
+
+  function closeStaffShift() {
+    setShowStaffShift(false);
+  }
+
+  async function submitStaffShift(e) {
+    e.preventDefault();
+    setStaffError("");
+    setStaffSubmitting(true);
+    try {
+      const url = staffForm.id ? `/api/admin/staff-shifts/${staffForm.id}` : "/api/admin/staff-shifts";
+      const method = staffForm.id ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateISO: staffForm.dateISO, staffName: staffForm.staffName,
+          start: staffForm.start, end: staffForm.end, note: staffForm.note
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowStaffShift(false);
+      load(monday);
+    } catch (err) {
+      setStaffError(err.message);
+    } finally {
+      setStaffSubmitting(false);
+    }
+  }
+
+  async function deleteStaffShiftHandler() {
+    if (!staffForm.id) return;
+    setStaffError("");
+    setStaffSubmitting(true);
+    try {
+      const res = await fetch(`/api/admin/staff-shifts/${staffForm.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setShowStaffShift(false);
+      load(monday);
+    } catch (err) {
+      setStaffError(err.message);
+    } finally {
+      setStaffSubmitting(false);
+    }
+  }
+
   // Bepaalt wat een klik op een boeking-blok in de agenda doet: een
   // manuele reservering die nog bevestigd moet worden opent de
   // bevestig-modal, elke andere echte klantboeking opent het detail/
@@ -864,6 +939,14 @@ export default function Backend() {
                   return (
                     <div key={i} className="week-day-col">
                       <div className="week-day-head">{DAY_LABELS[i]} {d.getDate()}</div>
+                      <div className="staff-row">
+                        {staffShifts.filter(s => s.dateISO === dISO).map(s => (
+                          <button type="button" key={s.id} className="staff-chip" title={s.note || ""} onClick={() => openEditStaffShift(s)}>
+                            {s.staffName} <span className="staff-chip-time">{s.start}–{s.end}</span>
+                          </button>
+                        ))}
+                        <button type="button" className="staff-chip add" title="Werkuren toevoegen" onClick={() => openAddStaffShift(dISO)}>+</button>
+                      </div>
                       <div className="week-day-body" style={{ height: (HOUR_END - HOUR_START) * HOUR_PX }}>
                         {roomCells.map(cell => {
                           if (cell.kind === "free") {
@@ -1433,6 +1516,48 @@ export default function Backend() {
           </div>
         </div>
       )}
+
+      {showStaffShift && (
+        <div className="modal-backdrop" onClick={closeStaffShift}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitStaffShift}>
+            <h3>{staffForm.id ? "Werkuren bewerken" : "Werkuren toevoegen"}</h3>
+            <label className="field-label">Datum</label>
+            <input required type="date" value={staffForm.dateISO}
+              onChange={e => setStaffForm({ ...staffForm, dateISO: e.target.value })} />
+            <label className="field-label">Naam medewerker</label>
+            <input required placeholder="Naam" value={staffForm.staffName}
+              onChange={e => setStaffForm({ ...staffForm, staffName: e.target.value })} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Van</label>
+                <input required type="time" value={staffForm.start}
+                  onChange={e => setStaffForm({ ...staffForm, start: e.target.value })} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Tot</label>
+                <input required type="time" value={staffForm.end}
+                  onChange={e => setStaffForm({ ...staffForm, end: e.target.value })} />
+              </div>
+            </div>
+            <input placeholder="Notitie (optioneel)" value={staffForm.note}
+              onChange={e => setStaffForm({ ...staffForm, note: e.target.value })} />
+
+            {staffError && <p className="error-text">{staffError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <button type="button" onClick={closeStaffShift}>Annuleren</button>
+              {staffForm.id && (
+                <button type="button" className="add-btn" style={{ background: "#B33A2E" }} disabled={staffSubmitting} onClick={deleteStaffShiftHandler}>
+                  Verwijderen
+                </button>
+              )}
+              <button type="submit" className="add-btn" disabled={staffSubmitting}>
+                {staffSubmitting ? "Bezig…" : staffForm.id ? "Opslaan" : "Toevoegen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -1462,6 +1587,11 @@ const css = `
   .week-days { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; gap: 6px; }
   .week-day-col { border: 1px solid var(--admin-line); border-radius: 10px; overflow: hidden; background: #fff; }
   .week-day-head { text-align: center; font-size: 12px; font-weight: 700; padding: 8px 0; border-bottom: 1px solid var(--admin-line); }
+  .staff-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 6px; border-bottom: 1px solid var(--admin-line); background: #FAF8F4; }
+  .staff-chip { padding: 2px 7px; border-radius: 999px; border: 1px solid var(--admin-accent); background: #fff; color: var(--admin-accent); font-size: 10px; line-height: 1.6; white-space: nowrap; }
+  .staff-chip-time { opacity: 0.75; }
+  .staff-chip.add { border-style: dashed; color: #7C7668; border-color: #C7C2B6; font-weight: 700; padding: 2px 8px; }
+  .staff-chip.add:hover { background: #F1EEE7; }
   .week-day-body { position: relative; background-image: repeating-linear-gradient(to bottom, #F1EEE7 0, #F1EEE7 1px, transparent 1px, transparent ${HOUR_PX}px); }
   .cal-event { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 11px; overflow: hidden; box-sizing: border-box; }
   .cal-event-label { font-weight: 700; }

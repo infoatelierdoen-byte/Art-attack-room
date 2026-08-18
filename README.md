@@ -254,6 +254,28 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   boekingslijst (85 rijen): na de bugfix hierboven importeerden 53 rijen
   correct, de overige 32 zijn tijdstippen buiten het vaste uurrooster
   (grotendeels al voorbije data, een aantal toekomstige nog te herbekijken).
+- **BUGFIX — annuleren met een gedeeltelijke terugbetaling faalde**
+  (`lib/store-sql.js: cancelBooking()`): de UPDATE-query gebruikte dezelfde
+  parameter (`$3`, het terugbetaalde bedrag) zowel als kolomwaarde als in een
+  `CASE WHEN $3 > 0`-vergelijking — de databaselaag kon daar geen eenduidig
+  type voor afleiden ("inconsistent types deduced for parameter $3").
+  Gefixt met een expliciete `::numeric`-cast op beide plekken. Geverifieerd
+  door effectief een boeking aan te maken en te annuleren met een
+  gedeeltelijke terugbetaling (bv. €45 van €45) — werkt nu.
+- **Personeelsplanning** (`staff_shifts`-tabel + `/api/admin/staff-shifts`):
+  een "Personeel"-balkje bovenaan elke dagkolom in de weekagenda, met per dag
+  een chip per medewerker ("naam, van–tot"). Klik op "+" om iemand toe te
+  voegen voor die dag, klik op een bestaande chip om te bewerken of te
+  verwijderen. Bewust **geen vast weekpatroon** (Robin, aug 2026: werkuren
+  verschillen te veel per week) — elke dag wordt apart ingevuld. Zichtbaar en
+  bewerkbaar voor zowel Admin als Gast (net als de rest van de agenda), en
+  volledig los van de boekingslogica: heeft geen invloed op beschikbaarheid
+  of prijzen, puur een overzicht. Nieuwe database, dus bij een bestaande
+  live-database moet je eenmalig `db/migrations/002_add_staff_shifts.sql`
+  uitvoeren (een gloednieuwe database via `db/schema.sql` heeft de tabel al).
+  Geverifieerd end-to-end tegen een draaiende server: aanmaken, bewerken,
+  verwijderen en de validatie dat het einduur na het startuur moet liggen —
+  allemaal getest via `curl`.
 
 Geverifieerd: `npm run build` slaagt, en alle bovenstaande flows zijn met
 `curl`/Node-scripts end-to-end getest tegen de echte SQL-laag — inclusief
@@ -634,6 +656,7 @@ db/
   schema.sql               kopie van schema-boekingssysteem.sql (bron van waarheid)
   seed.sql                 referentiedata: rooms, diensten, prijstrap, uurrooster
   import-gift-cards.sql    eenmalige import van de 355 bestaande cadeaubonnen (Wix + FareHarbor)
+  migrations/002_add_staff_shifts.sql  eenmalig uit te voeren tegen een bestaande live-database
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
   store-sql.js       de echte, SQL-gebaseerde implementatie (in gebruik door de API)
@@ -663,5 +686,7 @@ pages/
   api/admin/gift-cards.js           cadeaubonnen zoeken (GET) / manueel aanmaken (POST)
   api/admin/gift-cards/[id].js      cadeaubon activeren/uitschakelen (PATCH)
   api/gift-cards/purchase.js        klant koopt een cadeaubon (Mollie-checkout aanmaken)
+  api/admin/staff-shifts.js         personeelsplanning: week ophalen (GET) / dag toevoegen (POST)
+  api/admin/staff-shifts/[id].js    personeelsplanning: bewerken (PATCH) / verwijderen (DELETE)
 vercel.json          cronjob-config voor de wekelijkse verzamelfactuur (Vercel-hosting)
 ```
