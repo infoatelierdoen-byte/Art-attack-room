@@ -36,7 +36,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: `Kon het CSV-bestand niet lezen: ${err.message}` });
   }
 
-  const results = { imported: 0, duplicate: 0, no_session: 0, full: 0, error: 0 };
+  // imported_new_session = geboekt, maar het tijdslot stond niet in het vaste
+  // uurrooster en is als eenmalige sessie aangemaakt. Apart geteld zodat je na
+  // de import ziet welke uren je nog moet nakijken.
+  const results = { imported: 0, imported_new_session: 0, duplicate: 0, no_session: 0, full: 0, error: 0 };
   const details = [];
 
   for (const row of parsed.rows) {

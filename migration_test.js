@@ -195,6 +195,48 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
   log("006 is idempotent", ok6);
 
   // ================================================================
+  // Import: een boeking op een uur buiten het rooster
+  // ================================================================
+  // Deze boekingen bestaan echt en zijn betaald. Overslaan zou betekenen dat het
+  // tijdslot vrij lijkt en een tweede klant erop kan boeken.
+  const buitenRooster = { // maandag: er staat nooit iets gepland op maandag
+    serviceCode: "action_painting", dateISO: "2026-09-07", start: "10:15", partySize: 2,
+    customer: { name: "Buiten Rooster", email: "buiten@test.be", phone: "047", birthDate: "1990-01-01" },
+    note: "", paid: true
+  };
+  const {rows: voorImport} = await p.query(
+    "SELECT COUNT(*)::int c FROM sessions WHERE start_datetime = TIMESTAMPTZ '2026-09-07 10:15:00+02'");
+  log("Uitgangspunt: er bestaat geen sessie op ma 07/09 om 10:15", voorImport[0].c === 0);
+
+  const impUit = await store6.importWixBooking(buitenRooster);
+  log("Boeking buiten het rooster wordt tóch geïmporteerd", impUit.status === "imported_new_session", impUit.status);
+
+  const {rows: naImport} = await p.query(
+    `SELECT s.recurrence_rule_id, COUNT(b.id)::int AS boekingen
+       FROM sessions s LEFT JOIN bookings b ON b.session_id = s.id
+      WHERE s.start_datetime = TIMESTAMPTZ '2026-09-07 10:15:00+02'
+      GROUP BY s.id, s.recurrence_rule_id`);
+  log("Er is één sessie aangemaakt met de boeking erop",
+      naImport.length === 1 && naImport[0].boekingen === 1, JSON.stringify(naImport[0] || null));
+  log("De nieuwe sessie hangt niet aan een roosterregel (eenmalig)",
+      naImport[0] && naImport[0].recurrence_rule_id === null);
+
+  const {rows: roomNa} = await p.query(
+    `SELECT r.code FROM room_bookings rb JOIN rooms r ON r.id = rb.room_id
+      JOIN sessions s ON s.id = rb.session_id
+     WHERE s.start_datetime = TIMESTAMPTZ '2026-09-07 10:15:00+02'`);
+  log("De boeking kreeg een room toegewezen", roomNa.length === 1, roomNa[0] && roomNa[0].code);
+
+  // Een tweede klant op datzelfde uur hoort gewoon in de bestaande sessie te
+  // landen, niet in een nieuwe.
+  const imp2 = await store6.importWixBooking({ ...buitenRooster,
+    customer: { ...buitenRooster.customer, name: "Tweede Klant", email: "tweede@test.be" } });
+  const {rows: naTweede} = await p.query(
+    "SELECT COUNT(*)::int c FROM sessions WHERE start_datetime = TIMESTAMPTZ '2026-09-07 10:15:00+02'");
+  log("Tweede boeking op hetzelfde uur maakt geen extra sessie aan",
+      imp2.status === "imported" && naTweede[0].c === 1, `${imp2.status}, ${naTweede[0].c} sessie(s)`);
+
+  // ================================================================
   // Migratie 008 + snelheid: hoeveel databaseverzoeken per scherm?
   // ================================================================
   await p.query(fs.readFileSync(path.join(P,"db/migrations/008_unique_session_slot.sql"),"utf8"));

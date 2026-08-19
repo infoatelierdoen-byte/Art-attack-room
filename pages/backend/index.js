@@ -1728,11 +1728,16 @@ export default function Backend() {
             {importResult && (
               <div style={{ marginTop: 12, fontSize: 13 }}>
                 <p style={{ fontWeight: 700 }}>
-                  {importResult.results.imported || 0} geïmporteerd van {importResult.totalRows} rijen.
+                  {(importResult.results.imported || 0) + (importResult.results.imported_new_session || 0)} geïmporteerd van {importResult.totalRows} rijen.
+                  {importResult.results.imported_new_session > 0 && (
+                    <> Daarvan stonden er {importResult.results.imported_new_session} op een uur dat niet in het
+                      vaste uurrooster staat; voor die boekingen is een eenmalige sessie aangemaakt (zie hieronder).</>
+                  )}
                 </p>
                 <p style={{ color: "var(--admin-text-muted)" }}>
                   {importResult.results.duplicate || 0} al bestaand (overgeslagen) ·{" "}
-                  {importResult.results.no_session || 0} buiten uurrooster ·{" "}
+                  {importResult.results.imported_new_session || 0} met een nieuw aangemaakt tijdslot ·{" "}
+                  {importResult.results.no_session || 0} zonder sessie ·{" "}
                   {importResult.results.full || 0} tijdslot volzet ·{" "}
                   {importResult.results.error || 0} fout
                   {importResult.parseErrors.length > 0 && <> · {importResult.parseErrors.length} onleesbare rij(en)</>}

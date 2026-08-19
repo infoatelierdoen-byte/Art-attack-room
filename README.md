@@ -823,6 +823,23 @@ boeking gaat door, dus de bon is wel degelijk verzilverd. Enkel bij een
 annulering gaat het bonsaldo terug. Terugbetalen kan enkel als Admin, en enkel
 op een boeking die al betaald is.
 
+## Wix-boekingen importeren
+
+De import maakt nu zelf een sessie aan wanneer een boeking op een uur staat dat
+niet in het vaste uurrooster zit (Robin, aug 2026). Vroeger werd zo'n rij
+overgeslagen met de melding "buiten het uurrooster" — maar die boekingen bestaan
+echt en zijn betaald, en overslaan betekende dat het tijdslot vrij leek en een
+tweede klant erop kon boeken.
+
+De aangemaakte sessie is eenmalig (`recurrence_rule_id` NULL), precies zoals een
+handmatig toegevoegde extra sessie. **Het uurrooster zelf verandert niet.** Het
+verslag na de import telt ze apart als "met een nieuw aangemaakt tijdslot" en
+somt ze op, zodat je achteraf ziet welke uren je nog moet opkuisen.
+
+Getest op de echte export van 79 rijen: 78 vonden hun sessie, 1 kreeg er een
+(Fluid Art op di 22/09 om 19:00 — buiten de tweewekelijkse reeks). Komen er
+meerdere boekingen op datzelfde nieuwe uur, dan landen ze in dezelfde sessie.
+
 ## Snelheid: databaseverzoeken per scherm
 
 Op Neon is elke query een aparte netwerkronde. Lokaal (pg-mem of een Postgres op
