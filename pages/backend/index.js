@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const HOUR_START = 9;
 const HOUR_END = 22;
@@ -201,6 +201,17 @@ export default function Backend() {
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [pickerMonth, setPickerMonth] = useState(() => new Date().getMonth());
   const [loading, setLoading] = useState(true);
+
+  // De uurbalk links en de dagkolommen zijn twee aparte kolommen die allebei
+  // bovenaan beginnen. De dagkolommen hebben er echter nog een kop én een rij
+  // met werkuren boven staan, de uurbalk niet. Die stond op een vaste
+  // padding-top van 34px — genoeg voor de kop alleen, waardoor élke sessie
+  // ongeveer een half uur te laag leek te staan tegenover de uren ernaast.
+  // Vast getal werkt hier niet: de rij met werkuren wordt hoger zodra de chips
+  // over twee regels lopen. Daarom meten we de echte afstand na het renderen.
+  const weekBodyRef = useRef(null);
+  const [tijdbalkOffset, setTijdbalkOffset] = useState(34);
+  const [staffRijHoogte, setStaffRijHoogte] = useState(null);
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
 
@@ -632,6 +643,39 @@ export default function Backend() {
 
   // --- Boeking annuleren (bv. foute testboeking opruimen) ---
 
+  useLayoutEffect(() => {
+    const root = weekBodyRef.current;
+    if (!root) return;
+
+    function meet() {
+      const staffRijen = [...root.querySelectorAll(".staff-row")];
+      const bodies = [...root.querySelectorAll(".week-day-body")];
+      if (!bodies.length) return;
+
+      // 1. Alle rijen met werkuren even hoog maken. Zonder dit begint een dag
+      //    met veel werkuren-chips lager dan de rest en lopen de dagen onderling
+      //    uit de pas.
+      const hoogste = staffRijen.reduce((max, el) => {
+        const h = el.getBoundingClientRect().height;
+        return h > max ? h : max;
+      }, 0);
+      if (hoogste > 0) {
+        setStaffRijHoogte(prev => (prev !== null && Math.abs(prev - hoogste) < 0.5 ? prev : hoogste));
+      }
+
+      // 2. De uurbalk evenveel laten zakken als waar de dagkolommen beginnen.
+      const offset = bodies[0].getBoundingClientRect().top - root.getBoundingClientRect().top;
+      if (offset > 0) {
+        setTijdbalkOffset(prev => (Math.abs(prev - offset) < 0.5 ? prev : offset));
+      }
+    }
+
+    meet();
+    const ro = new ResizeObserver(meet);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [events, staffShifts, loading, monday]);
+
   // "Els Peeters" -> "Els P."  ·  "Familie Vandenberghe" -> "Familie V."
   // Eén woord blijft ongewijzigd. Tussenvoegsels ("de", "van", "van den") tellen
   // niet als achternaam, anders zou "Ann de Velde" eindigen op "Ann d.".
@@ -1059,8 +1103,8 @@ export default function Backend() {
           {loading ? (
             <p style={{ padding: 20 }}>Laden…</p>
           ) : (
-            <div className="week-body">
-              <div className="week-time-col">
+            <div className="week-body" ref={weekBodyRef}>
+              <div className="week-time-col" style={{ paddingTop: tijdbalkOffset }}>
                 {Array.from({ length: HOUR_END - HOUR_START + 1 }, (_, i) => (
                   <div key={i} className="hour-label">{HOUR_START + i}:00</div>
                 ))}
@@ -1074,7 +1118,7 @@ export default function Backend() {
                   return (
                     <div key={i} className="week-day-col">
                       <div className="week-day-head">{DAY_LABELS[i]} {d.getDate()}</div>
-                      <div className="staff-row">
+                      <div className="staff-row" style={staffRijHoogte ? { minHeight: staffRijHoogte } : undefined}>
                         {staffShifts.filter(s => s.dateISO === dISO).map(s => (
                           <button type="button" key={s.id} className="staff-chip" title={s.note || ""} onClick={() => openEditStaffShift(s)}>
                             {s.staffName} <span className="staff-chip-time">{s.start}–{s.end}</span>
@@ -1793,6 +1837,9 @@ const css = `
   .mini-cal-day.in-week { background: #FBE9E1; }
   .mini-cal-day.today { background: var(--admin-accent); color: #fff; font-weight: 700; }
   .week-body { display: flex; padding: 0 20px 40px; gap: 0; }
+  /* padding-top wordt na het renderen gemeten en als inline-stijl gezet, zie
+     de useLayoutEffect hierboven. De 34px hier is enkel de waarde vóór de
+     eerste meting, zodat er geen zichtbare sprong is. */
   .week-time-col { width: 56px; padding-top: 34px; }
   .hour-label { height: ${HOUR_PX}px; font-size: 11px; color: var(--admin-text-muted); }
   .week-days { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; gap: 6px; }

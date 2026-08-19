@@ -822,6 +822,25 @@ boeking gaat door, dus de bon is wel degelijk verzilverd. Enkel bij een
 annulering gaat het bonsaldo terug. Terugbetalen kan enkel als Admin, en enkel
 op een boeking die al betaald is.
 
+## Weekagenda — uitlijning van de uurbalk
+
+De uurbalk links en de zeven dagkolommen zijn aparte kolommen die allebei
+bovenaan beginnen, maar een dagkolom heeft er nog een kop én een rij met
+werkuren boven staan. De uurbalk had daarvoor een vaste `padding-top: 34px`,
+genoeg voor de kop alleen — waardoor élke sessie ongeveer een half uur te laag
+stond tegenover de uren ernaast. Gemeten: 33px verschil bij een uurhoogte van
+60px.
+
+Een vast getal lost dit niet op: de rij met werkuren wordt hoger zodra de chips
+over twee regels lopen. De echte afstand wordt daarom na het renderen gemeten
+(`useLayoutEffect` + `ResizeObserver` in `pages/backend/index.js`) en als
+inline `padding-top` op de uurbalk gezet. Dezelfde meting geeft alle rijen met
+werkuren de hoogte van de hoogste, zodat de dagen onderling ook uitgelijnd
+blijven.
+
+Dit is bewust niet met een vaste waarde in de CSS opgelost. Verandert er iets aan
+de kop of aan de werkurenrij, dan corrigeert de meting zichzelf.
+
 ## Weekagenda — hoe een boeking getoond wordt
 
 Gekozen ontwerp (Robin, aug 2026): het raster van vier rooms blijft, want elke
