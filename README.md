@@ -710,11 +710,83 @@ De volgorde voor een bestaande live database:
 3. `003_rename_action_painting.sql`
 4. **`005_add_gift_cards_to_existing_db.sql`** — ja, 005 vóór 004
 5. `004_gift_card_hardening.sql`
+6. `006_update_schedule.sql`
+7. `007_session_exceptions.sql`
 
 Alle vijf zijn idempotent: opnieuw draaien kan geen kwaad. 004 controleert zelf
 of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
 `migration_test.js` (deel van `npm test`) bootst precies deze situatie na en
 controleert de hele keten.
+
+## Uurrooster Action Painting
+
+Afgesproken met Robin, augustus 2026:
+
+| Dag | Uren |
+| --- | --- |
+| woensdag | 14:00, 16:30, 19:00 |
+| donderdag | t.e.m. 31/08/2026: 13:30, 16:00 en 18:30; **vanaf 01/09/2026 enkel 18:30** |
+| vrijdag | 14:00, 16:30 |
+| zaterdag | 11:00, 13:30, 16:00 |
+| zondag | 11:00, 13:30, 16:00 |
+
+Fluid Art: tweewekelijks op dinsdag 19:00, met **18/08/2026 als ankerdatum** —
+de dinsdag waarop de workshop effectief doorging. De reeks loopt dus 18/08,
+01/09, 15/09, ... Bij `interval_weeks = 2` bepaalt `anchor_date` wélke van de
+twee weken meetelt, dus die datum moet altijd op een echte workshopdag vallen.
+Stond hij eerder op 28/07/2026, waardoor de reeks een week verschoven was.
+
+De donderdagovergang werkt met einddatums: 13:30 en 16:00 hebben
+`end_date = 2026-08-31`, 18:30 heeft er geen. Vanaf 1 september blijft 18:30
+daardoor vanzelf als enige donderdagsessie over.
+
+De donderdaguren van augustus (13:30/16:00/18:30) komen uit de Wix-export van de
+bestaande boekingen — de database had er 14:00/16:30/19:00 staan, wat niet klopte
+met de 11 betaalde boekingen die er op die donderdagen stonden.
+
+**Uren wijzigen op een live database** doe je niet door `db/seed.sql` opnieuw te
+draaien. Sessies zijn gematerialiseerd: er staan al echte rijen in `sessions`
+voor elke datum die ooit opgevraagd is. Gebruik `006_update_schedule.sql` als
+model — dat past de regels aan én ruimt toekomstige LEGE sessies op die niet meer
+in het rooster passen. Sessies met een boeking blijven altijd staan; stap 0 van
+die migratie is een leesquery die toont welke boekingen buiten het nieuwe rooster
+vallen, zodat je die klanten kan verwittigen of hun boeking kan verplaatsen.
+
+## Eén workshop per boeking (geen tabs meer)
+
+Wie in de widget op een tegel klikt, boekt die ene workshop. De rij tabs waarmee
+je in het boekingsscherm naar een andere workshop kon springen is verwijderd
+(Robin, aug 2026): zo kan een klant niet per ongeluk in de kalender van de
+verkeerde workshop kijken terwijl de foto en de titel iets anders zeggen.
+
+Van workshop wisselen kan nog steeds, maar bewust via één weg: het pijltje
+linksboven ("Kies een andere workshop") brengt je terug naar het keuzescherm met
+de tegels. Boven het boekingspaneel staat nu de naam van de actieve workshop, zodat
+altijd duidelijk is waarvoor je aan het boeken bent.
+
+## Aantal personen aanpassen (en de room mee)
+
+In het boekingsdetail staat bovenaan een veld **Aantal personen** met de knop
+"Aanpassen en room herbekijken". Het systeem kiest daarna opnieuw de kleinste
+vrije room die past — dezelfde best-fit-logica als bij een nieuwe boeking
+(A=10, VL=7, VR=7, M=5).
+
+Waarom dit er is: bij de import van de Wix-boekingen stond het echte aantal
+personen nergens in de export (Wix telde boekingen, geen mensen). Een boeking die
+als 2 binnenkwam maar met 6 komt opdagen, zou anders in een te kleine room staan.
+
+Twee dingen om te weten:
+
+- **De eigen room telt niet als bezet mee.** Blijft die de beste keuze, dan
+  verandert er niets; past de groep er niet meer in, dan verhuist de boeking.
+  Is er geen enkele room vrij die past, dan gebeurt er niets en krijg je een
+  duidelijke melding — de boeking blijft ongewijzigd staan.
+- **De prijs blijft standaard staan.** Bij een geïmporteerde of al betaalde
+  boeking is het bedrag wat de klant effectief betaald heeft; dat stilzwijgend
+  herrekenen zou de omzetcijfers vervalsen. Vink "Prijs mee herrekenen" aan als
+  de klant wél een ander bedrag moet betalen.
+
+Enkel voor Admin (`/api/admin/change-party-size`).
 
 ## Terugbetalen zonder te annuleren
 
@@ -877,6 +949,8 @@ db/
   migrations/003_rename_action_painting.sql  idem, hernoemt de workshop op een bestaande live-database
   migrations/004_gift_card_hardening.sql     idem, unieke index op mollie_payment_id + CHECK saldo >= 0
   migrations/005_add_gift_cards_to_existing_db.sql  cadeaubon-tabellen/kolommen op een oudere live-database (DRAAI DIT VÓÓR 004)
+  migrations/006_update_schedule.sql        uurrooster Action Painting bijwerken (vrijdag, donderdag vanaf 01/09)
+  migrations/007_session_exceptions.sql     losse uitzonderingen: vr 02/10/2026 16:30 wordt 17:30
   check-schema-state.sql   leesbare diagnose: welke migraties zijn nog niet gedraaid?
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
@@ -902,6 +976,7 @@ pages/
   api/admin/manual-booking.js       boeking die het team zelf ingeeft (geen Mollie, evt. reserveOnly)
   api/admin/confirm-booking.js      een eerdere reservering alsnog bevestigen (betaald + factuur/cadeaubon)
   api/admin/refund-booking.js       (deel van het bedrag) terugbetalen ZONDER te annuleren; room blijft bezet
+  api/admin/change-party-size.js    aantal personen aanpassen + automatisch de best passende room kiezen
   api/admin/close-room.js           room(s) sluiten voor een tijdslot of hele dag
   api/admin/rooms.js                roomlijst (voor het room-sluiten-scherm)
   api/admin/extra-session.js        eenmalige extra sessie buiten het uurrooster

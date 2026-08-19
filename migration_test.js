@@ -67,6 +67,119 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
     customer:{name:"Test",email:"t2@t.be",phone:"047",birthDate:"1990-01-01"}, note:"", termsAccepted:true, marketingOptIn:false, giftCardCode: card.code });
   log("Boeking met cadeaubon slaagt na migratie (de oorspronkelijke fout is weg)", booking.amountDue === 0, `amountDue=${booking.amountDue}`);
 
+  // ================================================================
+  // Migratie 006: uurrooster Action Painting
+  // ================================================================
+  // Oude toestand nabootsen: vrijdag op 13:30/16:00 en geen donderdag 18:30.
+  await p.query(`UPDATE recurrence_rules rr SET start_time='13:30' FROM services sv
+                 WHERE sv.id=rr.service_id AND sv.name='Action Painting' AND rr.weekday=4 AND rr.start_time='14:00'`);
+  await p.query(`UPDATE recurrence_rules rr SET start_time='16:00' FROM services sv
+                 WHERE sv.id=rr.service_id AND sv.name='Action Painting' AND rr.weekday=4 AND rr.start_time='16:30'`);
+  await p.query(`UPDATE recurrence_rules rr SET start_time='14:00', end_date='2026-08-31' FROM services sv
+                 WHERE sv.id=rr.service_id AND sv.name='Action Painting' AND rr.weekday=3 AND rr.start_time='13:30'`);
+  await p.query(`UPDATE recurrence_rules rr SET start_time='16:30', end_date='2026-08-31' FROM services sv
+                 WHERE sv.id=rr.service_id AND sv.name='Action Painting' AND rr.weekday=3 AND rr.start_time='16:00'`);
+  await p.query(`UPDATE recurrence_rules rr SET start_time='19:00', end_date='2026-08-31' FROM services sv
+                 WHERE sv.id=rr.service_id AND sv.name='Action Painting' AND rr.weekday=3 AND rr.start_time='18:30'`);
+
+  // Sessies materialiseren voor de komende twee maanden (zoals de widget doet).
+  const store6 = require(path.join(P,"lib/store-sql.js"));
+  const vrijdagen = [];
+  for (let i = 1; i <= 60; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    const iso = d.toISOString().slice(0,10);
+    await store6.getAvailability("action_painting", iso, 2);
+    if (d.getDay() === 5) vrijdagen.push(iso);
+  }
+  const { rows: oudVr } = await p.query(
+    `SELECT COUNT(*)::int c FROM sessions s JOIN services sv ON sv.id=s.service_id
+     WHERE sv.name='Action Painting' AND s.start_datetime::time='13:30' AND s.start_datetime >= now()`);
+  log("Uitgangspunt: toekomstige vrijdagsessies staan op 13:30", oudVr[0].c > 0, `${oudVr[0].c} sessies`);
+
+  // Eén boeking op een vrijdag 13:30 — die mag NIET verdwijnen.
+  const avVr = await store6.getAvailability("action_painting", vrijdagen[0], 2);
+  const slot1330 = avVr.find(sl => sl.start === "13:30" && sl.bookable);
+  const { booking: vrB } = await store6.createManualBooking({
+    serviceCode:"action_painting", dateISO: vrijdagen[0], start:"13:30", partySize:2,
+    customer:{name:"Blijft Staan", email:"blijft@test.be", phone:"047"}, note:"", paymentMethod:"cash"
+  });
+  log("Testboeking op vrijdag 13:30 aangemaakt", !!slot1330 && !!vrB.id);
+
+  // De migratie draaien.
+  await p.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8"));
+
+  const { rows: regels } = await p.query(
+    `SELECT rr.weekday, rr.start_time::text AS t, rr.anchor_date, rr.end_date FROM recurrence_rules rr
+     JOIN services sv ON sv.id=rr.service_id WHERE sv.name='Action Painting' ORDER BY rr.weekday, rr.start_time`);
+  const heeft = (wd, t) => regels.some(r => r.weekday===wd && r.t.startsWith(t));
+  log("Vrijdag staat nu op 14:00 en 16:30", heeft(4,"14:00") && heeft(4,"16:30"));
+  log("Vrijdag 13:30/16:00 zijn weg als regel", !heeft(4,"13:30") && !heeft(4,"16:00"));
+  log("Woensdag onveranderd (14:00, 16:30, 19:00)", heeft(2,"14:00") && heeft(2,"16:30") && heeft(2,"19:00"));
+  log("Zaterdag onveranderd (11:00, 13:30, 16:00)", heeft(5,"11:00") && heeft(5,"13:30") && heeft(5,"16:00"));
+  log("Zondag onveranderd (11:00, 13:30, 16:00)", heeft(6,"11:00") && heeft(6,"13:30") && heeft(6,"16:00"));
+  const do1830 = regels.find(r => r.weekday===3 && r.t.startsWith("18:30"));
+  log("Donderdag 18:30 toegevoegd", !!do1830);
+  // Bewust toISODate() uit lib/dateUtils en NIET toISOString(): dat laatste
+  // rekent om naar UTC en zou een DATE-kolom van 01/09 in Europe/Brussels als
+  // "2026-08-31" teruggeven — precies de datumbug waar de README voor waarschuwt.
+  const { toISODate: dISO } = require(path.join(P,"lib/dateUtils.js"));
+  log("Donderdag 18:30 loopt door (geen einddatum)", do1830 && !do1830.end_date, String(do1830 && do1830.end_date));
+  const doZomer = regels.filter(r => r.weekday===3 && !r.t.startsWith("18:30"));
+  log("Donderdag-zomerrooster is 13:30 en 16:00",
+      doZomer.length===2 && doZomer.every(r => r.t.startsWith("13:30") || r.t.startsWith("16:00")),
+      doZomer.map(r => r.t.slice(0,5)).join(","));
+  log("Donderdag-zomerrooster loopt t.e.m. 31/08/2026",
+      doZomer.length > 0 && doZomer.every(r => r.end_date && dISO(r.end_date) === "2026-08-31"),
+      doZomer.map(r => dISO(r.end_date)).join(","));
+
+  // Fluid Art ongemoeid.
+  const { rows: fa } = await p.query(
+    `SELECT rr.weekday, rr.start_time::text AS t, rr.interval_weeks FROM recurrence_rules rr
+     JOIN services sv ON sv.id=rr.service_id WHERE sv.name='Fluid Art'`);
+  log("Fluid Art ongewijzigd (tweewekelijks dinsdag 19:00)",
+      fa.length===1 && fa[0].weekday===1 && fa[0].t.startsWith("19:00") && fa[0].interval_weeks===2);
+
+  // De geboekte sessie blijft staan, de lege oude sessies zijn opgeruimd.
+  const { rows: bewaard } = await p.query(
+    `SELECT COUNT(*)::int c FROM sessions s JOIN bookings b ON b.session_id=s.id WHERE b.id=$1`, [vrB.id]);
+  log("Sessie mét boeking blijft bestaan (boeking niet verweesd)", bewaard[0].c === 1);
+  const { rows: restVr } = await p.query(
+    `SELECT COUNT(*)::int c FROM sessions s JOIN services sv ON sv.id=s.service_id
+     WHERE sv.name='Action Painting' AND s.start_datetime::time='13:30' AND s.start_datetime >= now()
+       AND EXTRACT(ISODOW FROM s.start_datetime)=5`);
+  log("Lege vrijdagsessies van 13:30 zijn opgeruimd (enkel de geboekte blijft)", restVr[0].c === 1, `${restVr[0].c} over`);
+
+  // Nieuwe uren verschijnen bij het opnieuw opvragen.
+  const avNa = await store6.getAvailability("action_painting", vrijdagen[1], 2);
+  const uren = avNa.map(x => x.start);
+  log("Vrijdag toont nu 14:00 en 16:30", uren.includes("14:00") && uren.includes("16:30"), uren.join(","));
+  log("Vrijdag toont geen 13:30 meer", !uren.includes("13:30"), uren.join(","));
+
+  // Donderdag: vóór 01/09 geen 18:30, erna wel.
+  const doVoor = "2026-08-27", doNa = "2026-09-03"; // beide donderdagen
+  const avDoVoor = (await store6.getAvailability("action_painting", doVoor, 2)).map(x=>x.start);
+  const avDoNa   = (await store6.getAvailability("action_painting", doNa,   2)).map(x=>x.start);
+  log("Donderdag 27/08 (zomer): 13:30, 16:00 en 18:30 — zoals in de Wix-boekingen",
+      ["13:30","16:00","18:30"].every(t=>avDoVoor.includes(t)) && avDoVoor.length===3, avDoVoor.join(","));
+  log("Donderdag 03/09: enkel 18:30", avDoNa.length===1 && avDoNa[0]==="18:30", avDoNa.join(","));
+
+  // Fluid Art: reeks moet vanaf 18/08/2026 lopen, dus 01/09 wel en 25/08 niet.
+  const { rows: faNa } = await p.query(
+    `SELECT rr.anchor_date FROM recurrence_rules rr JOIN services sv ON sv.id=rr.service_id
+     WHERE sv.name='Fluid Art'`);
+  log("Fluid Art ankerdatum staat op 18/08/2026", dISO(faNa[0].anchor_date) === "2026-08-18", dISO(faNa[0].anchor_date));
+  const fa0109 = (await store6.getAvailability("fluid_art", "2026-09-01", 2)).map(x=>x.start);
+  const fa2508 = (await store6.getAvailability("fluid_art", "2026-08-25", 2)).map(x=>x.start);
+  const fa1509 = (await store6.getAvailability("fluid_art", "2026-09-15", 2)).map(x=>x.start);
+  log("Fluid Art op di 01/09 (in de reeks)", fa0109.includes("19:00"), fa0109.join(",") || "leeg");
+  log("Fluid Art NIET op di 25/08 (tussenweek)", fa2508.length === 0, fa2508.join(",") || "leeg");
+  log("Fluid Art op di 15/09 (twee weken later)", fa1509.includes("19:00"), fa1509.join(",") || "leeg");
+
+  // Idempotent.
+  let ok6 = true;
+  try { await p.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8")); } catch(e){ ok6=false; console.log("   "+e.message); }
+  log("006 is idempotent", ok6);
+
   // Zie de toelichting in giftcard_test.js: verbindingen netjes sluiten vóór de
   // embedded server stopt, anders eindigt een geslaagde run toch met exit-code 1.
   const dbm = require(path.join(P,"lib/db.js"));

@@ -234,6 +234,11 @@ export default function Backend() {
   const [detailSubmitting, setDetailSubmitting] = useState(false);
   const [cancelRefundAmount, setCancelRefundAmount] = useState("");
   const [cancelReason, setCancelReason] = useState("");
+  // Aantal personen aanpassen vanuit het boekingsdetail — herbekijkt meteen de
+  // room-toewijzing (rooms hebben verschillende capaciteiten).
+  const [partySizeInput, setPartySizeInput] = useState("");
+  const [recalcPrice, setRecalcPrice] = useState(false);
+  const [partySizeNotice, setPartySizeNotice] = useState("");
 
   const [showActionsMenu, setShowActionsMenu] = useState(false);
 
@@ -623,6 +628,48 @@ export default function Backend() {
     // gedeeltelijke terugbetaling (bv. annuleringskost ingehouden).
     setCancelRefundAmount(ev.amount != null ? String(ev.amount) : "0");
     setCancelReason("");
+    setPartySizeInput(ev.partySize != null ? String(ev.partySize) : "");
+    setRecalcPrice(false);
+    setPartySizeNotice("");
+  }
+
+  async function submitPartySize() {
+    setDetailError("");
+    setPartySizeNotice("");
+    setDetailSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/change-party-size", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookingId: detailTarget.bookingId,
+          partySize: Number(partySizeInput),
+          recalculatePrice: recalcPrice
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setPartySizeNotice(
+        `Aangepast naar ${data.partySize} personen` +
+        (data.roomCode ? ` — room ${data.roomCode}` : "") +
+        (data.priceRecalculated ? ` — nieuw bedrag €${Number(data.amountDue).toFixed(2)}` : "")
+      );
+      // Modal bewust open laten: zo ziet de medewerker meteen in welke room de
+      // boeking terechtgekomen is. De kop bovenaan meteen mee bijwerken, anders
+      // blijft daar het oude aantal en de oude room staan terwijl de melding
+      // eronder al iets anders zegt.
+      setDetailTarget(t => t && ({
+        ...t,
+        partySize: data.partySize,
+        roomCode: data.roomCode ?? t.roomCode,
+        amount: data.priceRecalculated ? Number(data.amountDue) : t.amount
+      }));
+      load(monday);
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailSubmitting(false);
+    }
   }
 
   // Terugbetalen zonder te annuleren: de boeking en de room blijven staan.
@@ -1435,6 +1482,38 @@ export default function Backend() {
 
             {authRole === "admin" ? (
               <>
+                {/* Aantal personen — bewust bovenaan: de rooms verschillen in
+                    capaciteit (A=10, VL=7, VR=7, M=5), dus dit is meestal het
+                    eerste wat rechtgezet moet worden bij een boeking die uit
+                    Wix geïmporteerd is. */}
+                <div className="detail-block">
+                  <label className="field-label">Aantal personen</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      type="number" min="1" max="10" step="1"
+                      value={partySizeInput}
+                      onChange={e => setPartySizeInput(e.target.value)}
+                      style={{ width: 70 }}
+                    />
+                    <button
+                      type="button" className="add-btn secondary"
+                      disabled={detailSubmitting || !partySizeInput || Number(partySizeInput) === detailTarget.partySize}
+                      onClick={submitPartySize}
+                    >
+                      {detailSubmitting ? "Bezig…" : "Aanpassen en room herbekijken"}
+                    </button>
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 6, color: "var(--admin-text-muted)" }}>
+                    <input type="checkbox" checked={recalcPrice} onChange={e => setRecalcPrice(e.target.checked)} />
+                    Prijs mee herrekenen naar het tarief voor deze groepsgrootte
+                  </label>
+                  <p style={{ fontSize: 12, color: "var(--admin-text-muted)", margin: "6px 0 0" }}>
+                    Het systeem kiest de kleinste vrije room die past. Vink hierboven aan als de
+                    klant ook een ander bedrag moet betalen — anders blijft het betaalde bedrag staan.
+                  </p>
+                  {partySizeNotice && <p style={{ fontSize: 12, color: "var(--admin-accent)", margin: "6px 0 0", fontWeight: 700 }}>{partySizeNotice}</p>}
+                </div>
+
                 <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
                   Vul hieronder het bedrag in en kies dan onderaan wat er moet gebeuren.
                   <br />
@@ -1691,8 +1770,10 @@ const css = `
      elkaar in één dagkolom, dus een cel is maar ~35px breed — een badge in de
      hoek zou daar bovenop de klantnaam vallen. Op een eigen regel blijft het
      leesbaar, hoe smal de cel ook is. */
+  .detail-block { border: 1px solid var(--admin-line); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; background: var(--admin-subtle); }
   .cal-event-count { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1.45;
-    padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,0.16); color: inherit; margin: 1px 0; }
+    padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,0.10); color: #000; margin: 1px 0; }
+  [data-theme="dark"] .cal-event-count { background: rgba(0,0,0,0.18); color: #000; }
   .cal-event.attack { background: #FBE9E1; border-left: 3px solid var(--admin-accent); }
   .cal-event.fluid { background: var(--fluid-bg); border-left: 3px solid var(--fluid); }
   .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); }

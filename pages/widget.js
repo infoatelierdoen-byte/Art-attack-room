@@ -341,17 +341,15 @@ export default function Widget() {
 
         <div className="abr-panel-wrap">
           <div className="abr-panel">
-            <div style={styles.tabs}>
-              {services.map(s => (
-                <button
-                  key={s.code}
-                  onClick={() => { setServiceCode(s.code); setSelectedDate(null); setSelectedSlot(null); }}
-                  style={{ ...styles.tab, ...(serviceCode === s.code ? styles.tabActive : {}) }}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            {/* Hier stond een rij tabs om tussen workshops te wisselen. Bewust
+                verwijderd (Robin, aug 2026): wie via een tegel doorklikt, boekt
+                die ene workshop. De agenda van een andere workshop bekijken kan
+                enkel door eerst terug te gaan naar het keuzescherm, via het
+                pijltje linksboven — zo blijft duidelijk welke workshop je aan
+                het boeken bent en kan je niet per ongeluk in de verkeerde
+                kalender kijken. De titel hieronder toont welke workshop actief
+                is. */}
+            <p className="abr-panel-service">{currentService?.label || ""}</p>
 
             {currentService && (
               <>
@@ -525,6 +523,7 @@ const layoutCss = `
   .abr-hero-mobile-title { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; margin: 0; padding: 16px; font-size: 19px; font-weight: 500; color: #fff; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 70%); }
   .abr-hero-text { display: none; }
 
+  .abr-panel-service { margin: 0 0 14px; font-size: 17px; font-weight: 600; color: var(--text); }
   .abr-back-link { display: none; border: none; }
   .abr-mode-booking .abr-back-link { position: absolute; top: 14px; left: 14px; z-index: 6; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,0.4); color: #fff; font-size: 18px; padding: 0; }
   .abr-back-text { display: none; }
@@ -554,9 +553,6 @@ const styles = {
   wrap: { minHeight: "100vh", display: "flex", justifyContent: "center", padding: "24px 12px" },
   card: { width: "100%", maxWidth: 480, background: "var(--panel)", borderRadius: 16, padding: 24 },
   h1: { fontSize: 22, marginTop: 0 },
-  tabs: { display: "flex", gap: 8, marginBottom: 16 },
-  tab: { flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "transparent", color: "var(--text)" },
-  tabActive: { background: "var(--accent)", borderColor: "var(--accent)", fontWeight: 700 },
   row: { display: "flex", alignItems: "center", gap: 12, marginBottom: 8 },
   label: { color: "var(--muted)", fontSize: 13, marginBottom: 6 },
   stepper: { display: "flex", alignItems: "center", gap: 10 },
