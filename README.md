@@ -867,6 +867,45 @@ regel per dag.
 gaat. Sluipt er ooit weer een lus met een query per sessie in, dan merk je dat
 meteen in plaats van pas op productie.
 
+## Rechtermuisknop in de weekagenda
+
+Rechtsklikken (of op een tablet: een halve seconde ingedrukt houden) geeft een
+menu dat verschilt naargelang waar je klikt. Enkel voor Admin. De linkermuisknop
+blijft doen wat hij deed — het menu is een snelkoppeling, geen vervanging.
+
+| Waar | Wat je krijgt |
+| --- | --- |
+| Op een boeking | Boeking wijzigen · Aantal personen aanpassen · Boeking verplaatsen · Boeking annuleren |
+| Op een vrije room | Boeking toevoegen (dag en uur al ingevuld) · Deze room sluiten |
+| Op een gesloten room | Room heropenen, met de reden in de kop van het menu |
+| Op het uurlabel van een tijdslot | Hele tijdslot sluiten of heropenen, met het aantal vrije/gesloten rooms erbij |
+
+Het uurlabel boven elke rij rooms is nieuw. Het uur stond enkel in de balk links;
+nu staat het ook per dag, en het is meteen de plek om op te rechtsklikken voor
+acties die over het hele tijdslot gaan.
+
+Staan alle rooms van een tijdslot al vol met boekingen, dan valt er niets te
+sluiten en toont het menu die knop niet — het zegt gewoon dat alles geboekt is.
+
+**Heropenen is nieuw** (`/api/admin/reopen-room`). `closeRoom()` had geen
+tegenhanger: een gesloten room kreeg je alleen terug open via de database. Het
+heropenen raakt uitsluitend rijen met `block_type = 'closed'`; een room die bezet
+is door een echte boeking komt hier nooit vrij.
+
+## Boeking verplaatsen
+
+Het scherm toont nu de bestaande tijdsloten van de gekozen dag als knoppen, met
+de uren waar geen room meer vrij is voor die groepsgrootte uitgegrijsd. Vroeger
+typte je datum en uur blind in en kreeg je pas na het opslaan te horen dat er geen
+sessie stond.
+
+**Verplaatsen naar een uur dat nog niet bestaat kan wel degelijk** (Robin, aug
+2026). Vul een ander uur in en `rescheduleBooking()` maakt daar een eenmalige
+sessie voor aan — `recurrence_rule_id` blijft NULL, dus het vaste uurrooster
+verandert er niet door. Handig voor een klant die vraagt om een half uur later te
+komen. Dezelfde logica zit in de Wix-import, die boekingen buiten het rooster ook
+niet meer overslaat.
+
 ## Weekagenda — uitlijning van de uurbalk
 
 De uurbalk links en de zeven dagkolommen zijn aparte kolommen die allebei
@@ -1073,6 +1112,7 @@ pages/
   api/admin/confirm-booking.js      een eerdere reservering alsnog bevestigen (betaald + factuur/cadeaubon)
   api/admin/refund-booking.js       (deel van het bedrag) terugbetalen ZONDER te annuleren; room blijft bezet
   api/admin/change-party-size.js    aantal personen aanpassen + automatisch de best passende room kiezen
+  api/admin/reopen-room.js          een room-sluiting weer opheffen (tegenhanger van close-room)
   api/admin/close-room.js           room(s) sluiten voor een tijdslot of hele dag
   api/admin/rooms.js                roomlijst (voor het room-sluiten-scherm)
   api/admin/extra-session.js        eenmalige extra sessie buiten het uurrooster

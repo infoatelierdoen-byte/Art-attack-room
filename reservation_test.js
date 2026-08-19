@@ -136,6 +136,69 @@ async function main() {
     log("Gift card deducted only after confirmation", Number(cardAfter[0].remaining_amount) === 50 - Number(b3.amountDue) - 0 || Number(cardAfter[0].remaining_amount) < 50, cardAfter[0].remaining_amount);
 
     // ================================================================
+    // Rooms sluiten en weer heropenen (nieuw, aug 2026)
+    // ================================================================
+    let slSlot = null;
+    for (let i = 1; i <= 40 && !slSlot; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const free = av.find(sl => sl.bookable && sl.roomsLeft === 4);
+      if (free) slSlot = { iso, start: free.start };
+    }
+    const vrijeRooms = async () => {
+      const av = await store.getAvailability("action_painting", slSlot.iso, 2);
+      return (av.find(x => x.start === slSlot.start) || {}).roomsLeft;
+    };
+    log("Uitgangspunt: 4 rooms vrij", (await vrijeRooms()) === 4);
+
+    await store.closeRoom({ dateISO: slSlot.iso, start: slSlot.start, roomId: "VL", reason: "vloer wordt gelakt" });
+    log("Eén room sluiten laat er 3 over", (await vrijeRooms()) === 3, await vrijeRooms());
+
+    const her1 = await store.reopenRoom({ dateISO: slSlot.iso, start: slSlot.start, roomId: "VL" });
+    log("Diezelfde room heropenen geeft hem terug vrij", (await vrijeRooms()) === 4, `${her1.heropend} sluiting(en) opgeheven`);
+
+    // Hele tijdslot sluiten en in één keer heropenen.
+    await store.closeRoom({ dateISO: slSlot.iso, start: slSlot.start, allRooms: true, reason: "verlof" });
+    log("Alle rooms sluiten laat er 0 over", (await vrijeRooms()) === 0, await vrijeRooms());
+    const her2 = await store.reopenRoom({ dateISO: slSlot.iso, start: slSlot.start, allRooms: true });
+    log("Hele tijdslot heropenen zet alles terug open", (await vrijeRooms()) === 4, `${her2.heropend} sluitingen opgeheven`);
+
+    // Een room die bezet is door een ECHTE boeking mag niet vrijkomen door te heropenen.
+    const { booking: slB } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: slSlot.iso, start: slSlot.start, partySize: 2,
+      customer: { name: "Blijft Geboekt", email: "blijft2@test.be", phone: "047" },
+      note: "", paymentMethod: "cash"
+    });
+    log("Boeking bezet één room", (await vrijeRooms()) === 3, await vrijeRooms());
+    await store.reopenRoom({ dateISO: slSlot.iso, start: slSlot.start, allRooms: true });
+    log("Heropenen raakt een echte boeking NIET aan", (await vrijeRooms()) === 3, await vrijeRooms());
+    const { rows: nogGeboekt } = await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [slB.id]);
+    log("De boeking heeft nog steeds haar room", nogGeboekt[0].c === 1);
+
+    // Verplaatsen naar een tijdstip waar nog GEEN sessie staat.
+    const raarUur = "20:15";
+    const { rows: bestaatNiet } = await pool.query(
+      `SELECT COUNT(*)::int c FROM sessions s JOIN services sv ON sv.id = s.service_id
+        WHERE sv.name = 'Action Painting' AND s.start_datetime = $1`,
+      [new Date(`${slSlot.iso}T${raarUur}:00`)]);
+    log(`Uitgangspunt: om ${raarUur} staat er nog geen sessie`, bestaatNiet[0].c === 0);
+    const verplaatst = await store.rescheduleBooking(slB.id, { dateISO: slSlot.iso, start: raarUur });
+    // rescheduleBooking maakt een NIEUWE boeking aan en markeert de oude als
+    // 'rescheduled' — vandaar newBookingId in plaats van bookingId.
+    log("Verplaatsen naar een onbestaand tijdslot lukt", !!verplaatst.newBookingId, JSON.stringify(verplaatst));
+    const { rows: nuWel } = await pool.query(
+      `SELECT s.recurrence_rule_id, COUNT(b.id)::int AS boekingen
+         FROM sessions s JOIN services sv ON sv.id = s.service_id
+         LEFT JOIN bookings b ON b.session_id = s.id AND b.status NOT IN ('cancelled','rescheduled')
+        WHERE sv.name = 'Action Painting' AND s.start_datetime = $1
+        GROUP BY s.id, s.recurrence_rule_id`,
+      [new Date(`${slSlot.iso}T${raarUur}:00`)]);
+    log(`Er staat nu een sessie om ${raarUur} met de boeking erop`, nuWel.length === 1 && nuWel[0].boekingen === 1);
+    log("Die sessie hangt niet aan het vaste rooster (eenmalig)", nuWel[0].recurrence_rule_id === null);
+
+    // ================================================================
     // Aantal personen aanpassen + room opnieuw kiezen (nieuw, aug 2026)
     // ================================================================
     let psSlot = null;

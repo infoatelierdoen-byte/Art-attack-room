@@ -128,17 +128,28 @@ function buildRoomGrid(dayEvents, roomOrder) {
     });
     const totaal = inhoud.reduce((som, c) => som + c.gewicht, 0);
 
+    // Het tijdslot zelf als klein label boven de rij rooms. Dat geeft je meteen
+    // het uur per dag (dat stond enkel in de balk links), én een plek om op te
+    // rechtsklikken voor acties die over het hele tijdslot gaan.
+    const vrijInSlot = inhoud.filter(c => !c.booking && !c.closed).length;
+    const geslotenInSlot = inhoud.filter(c => c.closed).length;
+    cells.push({
+      key: `${slot.start}-tag`, kind: "slotTag", top: top - 15, left: "2px", height: 14,
+      slotStart: slot.start, vrijInSlot, geslotenInSlot
+    });
+
     let gepasseerd = 0;
     inhoud.forEach(({ room, booking, closed, gewicht }) => {
       const left = `calc(${(gepasseerd / totaal) * 100}% + 2px)`;
       const width = `calc(${(gewicht / totaal) * 100}% - 4px)`;
       gepasseerd += gewicht;
+      const gemeen = { slotStart: slot.start, vrijInSlot, geslotenInSlot };
       if (booking) {
-        cells.push({ key: `${slot.start}-${room.id}`, kind: "booking", top, height, left, width, ev: booking, roomLabel: room.label });
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "booking", top, height, left, width, ev: booking, roomLabel: room.label, ...gemeen });
       } else if (closed) {
-        cells.push({ key: `${slot.start}-${room.id}`, kind: "closed", top, height, left, width, ev: closed, roomLabel: room.label });
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "closed", top, height, left, width, ev: closed, roomLabel: room.label, ...gemeen });
       } else {
-        cells.push({ key: `${slot.start}-${room.id}`, kind: "free", top, height, left, width, roomLabel: room.label });
+        cells.push({ key: `${slot.start}-${room.id}`, kind: "free", top, height, left, width, roomLabel: room.label, ...gemeen });
       }
     });
   }
@@ -266,6 +277,13 @@ export default function Backend() {
   const [showActionsMenu, setShowActionsMenu] = useState(false);
 
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
+  // Rechtermuismenu in de weekagenda: één menu, andere inhoud naargelang je op
+  // een boeking, een vrije room, een gesloten room of het tijdslot zelf klikt.
+  const [ctxMenu, setCtxMenu] = useState(null);
+  // Beschikbare tijdsloten bij het verplaatsen. Vroeger typte je datum en uur
+  // blind in en kreeg je pas na het opslaan te horen dat er geen sessie stond.
+  const [rescheduleSlots, setRescheduleSlots] = useState([]);
+  const [rescheduleLoadingSlots, setRescheduleLoadingSlots] = useState(false);
   const [rescheduleDateISO, setRescheduleDateISO] = useState("");
   const [rescheduleStart, setRescheduleStart] = useState("");
   const [rescheduleError, setRescheduleError] = useState("");
@@ -400,6 +418,16 @@ export default function Backend() {
     setManualSlots([]);
     setManualError("");
     setShowAddBooking(true);
+  }
+
+  // Zelfde scherm, maar met de dag en het uur al ingevuld — vanuit het
+  // rechtermuismenu op een vrije room.
+  function openAddBookingVoor(dateISO, start) {
+    const code = services[0]?.code || "";
+    setManualForm({ ...EMPTY_MANUAL_FORM, serviceCode: code, dateISO, start });
+    setManualError("");
+    setShowAddBooking(true);
+    fetchManualSlots(code, dateISO, EMPTY_MANUAL_FORM.partySize);
   }
 
   function fetchManualSlots(serviceCode, dateISO, partySize) {
@@ -792,12 +820,30 @@ export default function Backend() {
   // Vanuit het boekingsdetailscherm (na een klik op een boeking in de
   // agenda) — zo gaan zowel "Boeking verplaatsen" als "Boeking annuleren"
   // altijd meteen over de juiste boeking, zonder apart zoekscherm.
-  function openRescheduleFromDetail() {
-    setRescheduleTarget(detailTarget);
-    setRescheduleDateISO(detailTarget.dateISO);
-    setRescheduleStart(detailTarget.start);
+  // Vanuit het rechtermuismenu, rechtstreeks op de boeking in de agenda.
+  function openReschedule(ev) {
+    setRescheduleTarget(ev);
+    setRescheduleDateISO(ev.dateISO);
+    setRescheduleStart(ev.start);
     setRescheduleError("");
+    setRescheduleSlots([]);
+  }
+
+  // Welke uren bestaan er op de gekozen dag, en passen ze voor deze groep?
+  useEffect(() => {
+    if (!rescheduleTarget || !rescheduleDateISO) { setRescheduleSlots([]); return; }
+    setRescheduleLoadingSlots(true);
+    fetch(`/api/availability?service=${rescheduleTarget.service}&date=${rescheduleDateISO}&partySize=${rescheduleTarget.partySize || 1}`)
+      .then(r => r.json())
+      .then(d => setRescheduleSlots(d.slots || []))
+      .catch(() => setRescheduleSlots([]))
+      .finally(() => setRescheduleLoadingSlots(false));
+  }, [rescheduleTarget, rescheduleDateISO]);
+
+  function openRescheduleFromDetail() {
+    const t = detailTarget;
     setDetailTarget(null);
+    openReschedule(t);
   }
 
   async function submitReschedule(e) {
@@ -934,6 +980,68 @@ export default function Backend() {
   // bevestig-modal, elke andere echte klantboeking opent het detail/
   // annuleer-scherm. Vrije/gesloten cellen en persoonlijke afspraken zijn niet
   // klikbaar.
+  // --- Rechtermuismenu ---
+
+  function openCtxMenu(e, inhoud) {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ ...inhoud, x: e.clientX, y: e.clientY });
+  }
+
+  // Lang indrukken op een tablet geeft hetzelfde menu; daar bestaat geen
+  // rechtermuisknop.
+  function langIndrukken(inhoud) {
+    let timer = null;
+    return {
+      onTouchStart: e => {
+        const t = e.touches[0];
+        timer = setTimeout(() => setCtxMenu({ ...inhoud, x: t.clientX, y: t.clientY }), 500);
+      },
+      onTouchEnd: () => clearTimeout(timer),
+      onTouchMove: () => clearTimeout(timer),
+      onTouchCancel: () => clearTimeout(timer)
+    };
+  }
+
+  // Escape sluit het menu, en bij het scrollen van de agenda verdwijnt het ook —
+  // anders blijft het zweven op een plek die niets meer met de cel te maken heeft.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const sluit = e => { if (!e || e.key === "Escape" || e.type === "scroll") setCtxMenu(null); };
+    document.addEventListener("keydown", sluit);
+    window.addEventListener("scroll", sluit, true);
+    return () => {
+      document.removeEventListener("keydown", sluit);
+      window.removeEventListener("scroll", sluit, true);
+    };
+  }, [ctxMenu]);
+
+  async function ctxSluitRoom({ dateISO, start, roomId, allRooms }) {
+    setCtxMenu(null);
+    try {
+      const res = await fetch("/api/admin/close-room", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dateISO, start, roomId, allRooms, reason: "Gesloten via de agenda" })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      load(monday);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function ctxHeropenRoom({ dateISO, start, roomId, allRooms }) {
+    setCtxMenu(null);
+    try {
+      const res = await fetch("/api/admin/reopen-room", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dateISO, start, roomId, allRooms })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      load(monday);
+    } catch (err) { alert(err.message); }
+  }
+
   function handleEventClick(ev) {
     if (ev.pendingConfirmation) return openConfirmBooking(ev);
     if (ev.kind === "service" && ev.bookingId) return openDetail(ev);
@@ -1128,17 +1236,49 @@ export default function Backend() {
                       </div>
                       <div className="week-day-body" style={{ height: (HOUR_END - HOUR_START) * HOUR_PX }}>
                         {roomCells.map(cell => {
-                          if (cell.kind === "free") {
+                          const ctxBasis = { dateISO: dISO, start: cell.slotStart, roomId: cell.roomLabel };
+                          if (cell.kind === "slotTag") {
+                            const menu = {
+                              soort: "tijdslot", dateISO: dISO, start: cell.slotStart,
+                              vrijeRooms: cell.vrijInSlot, geslotenRooms: cell.geslotenInSlot
+                            };
                             return (
-                              <div key={cell.key} className="cal-room-cell free" style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}>
+                              <div
+                                key={cell.key} className="cal-slot-tag"
+                                style={{ top: cell.top, left: cell.left, height: cell.height }}
+                                title={`${cell.slotStart} — rechterklik voor opties voor dit hele tijdslot`}
+                                onContextMenu={authRole === "admin" ? e => openCtxMenu(e, menu) : undefined}
+                                {...(authRole === "admin" ? langIndrukken(menu) : {})}
+                              >
+                                {cell.slotStart}
+                              </div>
+                            );
+                          }
+                          if (cell.kind === "free") {
+                            const menu = { soort: "vrij", ...ctxBasis, vrijeRooms: cell.vrijInSlot };
+                            return (
+                              <div
+                                key={cell.key} className="cal-room-cell free"
+                                style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
+                                onContextMenu={authRole === "admin" ? e => openCtxMenu(e, menu) : undefined}
+                                {...(authRole === "admin" ? langIndrukken(menu) : {})}
+                                title="Rechterklik voor opties"
+                              >
                                 <div className="cal-room-label">{cell.roomLabel}</div>
                                 <div className="cal-room-sub">Vrij</div>
                               </div>
                             );
                           }
                           if (cell.kind === "closed") {
+                            const menu = { soort: "gesloten", ...ctxBasis, reden: cell.ev.reason };
                             return (
-                              <div key={cell.key} className="cal-room-cell closed" style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }} title={cell.ev.reason}>
+                              <div
+                                key={cell.key} className="cal-room-cell closed"
+                                style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
+                                title={`${cell.ev.reason || "Gesloten"} — rechterklik om te heropenen`}
+                                onContextMenu={authRole === "admin" ? e => openCtxMenu(e, menu) : undefined}
+                                {...(authRole === "admin" ? langIndrukken(menu) : {})}
+                              >
                                 <div className="cal-room-label">{cell.roomLabel}</div>
                                 <div className="cal-room-sub">Niet beschikbaar</div>
                               </div>
@@ -1155,6 +1295,12 @@ export default function Backend() {
                               className={`cal-event cal-room-booked ${v.cls}${cell.ev.pendingConfirmation || cell.ev.bookingId ? " clickable" : ""}`}
                               style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
                               onClick={() => handleEventClick(cell.ev)}
+                              onContextMenu={authRole === "admin" && cell.ev.bookingId
+                                ? e => openCtxMenu(e, { soort: "boeking", ev: cell.ev, roomId: cell.roomLabel })
+                                : undefined}
+                              {...(authRole === "admin" && cell.ev.bookingId
+                                ? langIndrukken({ soort: "boeking", ev: cell.ev, roomId: cell.roomLabel })
+                                : {})}
                               title={[
                                 cell.ev.customer,
                                 cell.ev.partySize != null ? `${cell.ev.partySize} personen` : null,
@@ -1681,6 +1827,70 @@ export default function Backend() {
         </div>
       )}
 
+      {/* Rechtermuismenu. Eén component, vier vormen — welke items je krijgt hangt
+          af van waar je geklikt hebt. Alle acties bestonden al, behalve het
+          heropenen van een gesloten room. */}
+      {ctxMenu && (
+        <>
+          <div className="menu-backdrop" onClick={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null); }} />
+          <div className="ctx-menu" style={{ left: Math.min(ctxMenu.x, 1200), top: ctxMenu.y }} onClick={e => e.stopPropagation()}>
+            {ctxMenu.soort === "boeking" && (
+              <>
+                <div className="ctx-kop">{ctxMenu.ev.customer} — room {ctxMenu.roomId}</div>
+                <button type="button" onClick={() => { setCtxMenu(null); openDetail(ctxMenu.ev); }}>Boeking wijzigen</button>
+                <button type="button" onClick={() => { setCtxMenu(null); openDetail(ctxMenu.ev); }}>Aantal personen aanpassen</button>
+                <button type="button" onClick={() => { const ev = ctxMenu.ev; setCtxMenu(null); openReschedule(ev); }}>Boeking verplaatsen</button>
+                <div className="ctx-scheiding" />
+                <button type="button" className="gevaar" onClick={() => { setCtxMenu(null); openDetail(ctxMenu.ev); }}>Boeking annuleren</button>
+              </>
+            )}
+
+            {ctxMenu.soort === "vrij" && (
+              <>
+                <div className="ctx-kop">Room {ctxMenu.roomId} — vrij om {ctxMenu.start}</div>
+                <button type="button" onClick={() => { const m = ctxMenu; setCtxMenu(null); openAddBookingVoor(m.dateISO, m.start); }}>Boeking toevoegen</button>
+                <div className="ctx-scheiding" />
+                <button type="button" onClick={() => ctxSluitRoom({ dateISO: ctxMenu.dateISO, start: ctxMenu.start, roomId: ctxMenu.roomId })}>
+                  Room {ctxMenu.roomId} sluiten
+                </button>
+              </>
+            )}
+
+            {ctxMenu.soort === "gesloten" && (
+              <>
+                <div className="ctx-kop">Room {ctxMenu.roomId} — gesloten{ctxMenu.reden ? `: ${ctxMenu.reden}` : ""}</div>
+                <button type="button" onClick={() => ctxHeropenRoom({ dateISO: ctxMenu.dateISO, start: ctxMenu.start, roomId: ctxMenu.roomId })}>
+                  Room {ctxMenu.roomId} heropenen
+                </button>
+              </>
+            )}
+
+            {ctxMenu.soort === "tijdslot" && (
+              <>
+                <div className="ctx-kop">
+                  Tijdslot {ctxMenu.start} — {ctxMenu.vrijeRooms} vrij, {ctxMenu.geslotenRooms} gesloten
+                </div>
+                {/* Zijn alle rooms al bezet of gesloten, dan valt er niets meer te
+                    sluiten en tonen we die knop niet. */}
+                {ctxMenu.vrijeRooms > 0 && (
+                  <button type="button" onClick={() => ctxSluitRoom({ dateISO: ctxMenu.dateISO, start: ctxMenu.start, allRooms: true })}>
+                    Dit tijdslot sluiten ({ctxMenu.vrijeRooms} vrije room{ctxMenu.vrijeRooms === 1 ? "" : "s"})
+                  </button>
+                )}
+                {ctxMenu.geslotenRooms > 0 && (
+                  <button type="button" onClick={() => ctxHeropenRoom({ dateISO: ctxMenu.dateISO, start: ctxMenu.start, allRooms: true })}>
+                    Dit tijdslot heropenen ({ctxMenu.geslotenRooms} gesloten)
+                  </button>
+                )}
+                {ctxMenu.vrijeRooms === 0 && ctxMenu.geslotenRooms === 0 && (
+                  <div className="ctx-leeg">Alle rooms zijn geboekt — er valt niets te sluiten.</div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
       {rescheduleTarget && (
         <div className="modal-backdrop" onClick={() => setRescheduleTarget(null)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitReschedule}>
@@ -1691,11 +1901,38 @@ export default function Backend() {
             </p>
             <label className="field-label">Nieuwe datum</label>
             <input required type="date" value={rescheduleDateISO} onChange={e => setRescheduleDateISO(e.target.value)} />
-            <label className="field-label">Nieuw tijdstip</label>
+
+            <label className="field-label">
+              Bestaande tijdsloten op deze dag
+              {rescheduleLoadingSlots && <span style={{ fontWeight: 400 }}> — laden…</span>}
+            </label>
+            {!rescheduleLoadingSlots && rescheduleSlots.length === 0 && (
+              <p style={{ fontSize: 12, color: "var(--admin-text-muted)", margin: "2px 0 0" }}>
+                Geen sessies gepland op deze dag. Vul hieronder zelf een uur in.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 4 }}>
+              {rescheduleSlots.map(sl => (
+                <button
+                  key={sl.start} type="button"
+                  className={`slot-knop${rescheduleStart === sl.start ? " actief" : ""}`}
+                  disabled={!sl.bookable}
+                  title={sl.bookable ? "" : `Geen room vrij voor ${rescheduleTarget.partySize} personen`}
+                  onClick={() => setRescheduleStart(sl.start)}
+                >
+                  {sl.start}
+                </button>
+              ))}
+            </div>
+
+            <label className="field-label">Of een ander uur</label>
             <input required type="time" value={rescheduleStart} onChange={e => setRescheduleStart(e.target.value)} />
             <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
               Klant, groepsgrootte, prijs en betaalstatus blijven ongewijzigd — enkel het tijdslot verandert.
-              Kan enkel naar een tijdstip waar effectief een sessie gepland staat.
+              De room wordt opnieuw gekozen: de kleinste vrije die past.
+              <br />
+              Staat er nog geen sessie op het uur dat je invult, dan wordt die eenmalig aangemaakt. Het vaste
+              uurrooster verandert daar niet door.
             </p>
             {rescheduleError && <p className="error-text">{rescheduleError}</p>}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -1901,6 +2138,26 @@ const css = `
   .cal-room-sub { opacity: 0.75; }
   /* Geboekte roomcel: code bovenaan op een vaste plaats, dan de (afgekorte)
      naam, dan het aantal personen. */
+  .slot-knop { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--admin-line);
+    background: var(--admin-surface); color: var(--admin-text); font: inherit; font-size: 13px; cursor: pointer; }
+  .slot-knop:hover:not(:disabled) { border-color: var(--admin-accent); }
+  .slot-knop.actief { background: var(--admin-accent); border-color: var(--admin-accent); color: #fff; font-weight: 700; }
+  .slot-knop:disabled { border-style: dashed; color: var(--admin-text-muted); opacity: 0.5; cursor: not-allowed; }
+  .ctx-menu { position: fixed; z-index: 30; min-width: 226px; background: var(--admin-surface);
+    border: 1px solid var(--admin-line); border-radius: 10px; padding: 5px;
+    box-shadow: 0 12px 34px rgba(0,0,0,0.28); }
+  .ctx-kop { font-size: 10.5px; color: var(--admin-text-muted); padding: 5px 9px 6px;
+    border-bottom: 1px solid var(--admin-line); margin-bottom: 4px; }
+  .ctx-menu button { display: block; width: 100%; text-align: left; background: none; border: none;
+    color: var(--admin-text); font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: 6px; cursor: pointer; }
+  .ctx-menu button:hover { background: var(--admin-hover); }
+  .ctx-menu button.gevaar { color: #B33A2E; }
+  .ctx-scheiding { height: 1px; background: var(--admin-line); margin: 4px 2px; }
+  .ctx-leeg { font-size: 12px; color: var(--admin-text-muted); padding: 6px 9px; }
+  .cal-slot-tag { position: absolute; font-size: 9.5px; font-weight: 700; color: var(--admin-text-muted);
+    letter-spacing: 0.03em; line-height: 14px; padding: 0 4px; border-radius: 4px; cursor: context-menu;
+    user-select: none; }
+  .cal-slot-tag:hover { background: var(--admin-hover); color: var(--admin-text); }
   .cal-room-booked { display: flex; flex-direction: column; gap: 1px; padding: 3px 4px; }
   .cal-room-code { font-size: 9px; font-weight: 700; opacity: 0.65; line-height: 1.2; letter-spacing: 0.04em; }
   /* De naam mag over meerdere regels: een roomcel is maar ~35px breed maar wel
