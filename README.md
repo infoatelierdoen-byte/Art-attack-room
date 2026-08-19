@@ -744,6 +744,15 @@ De donderdaguren van augustus (13:30/16:00/18:30) komen uit de Wix-export van de
 bestaande boekingen — de database had er 14:00/16:30/19:00 staan, wat niet klopte
 met de 11 betaalde boekingen die er op die donderdagen stonden.
 
+**Tijdzone in migraties.** Elke migratie die met `::time` of `::date` op
+`start_datetime` werkt, MOET bovenaan `SET TIME ZONE 'Europe/Brussels';` zetten.
+`start_datetime` is een TIMESTAMPTZ en zo'n cast rekent om naar de tijdzone van
+de *server*, niet die van de applicatie. Neon staat standaard op UTC: een sessie
+van 13:30 Brusselse tijd geeft dan 11:30 terug, matcht geen enkele vergelijking,
+en de migratie beschouwt élke sessie als "buiten het rooster". Gemeten: op UTC
+37 van de 37 toekomstige sessies fout aangemerkt, op Europe/Brussels 0 van de 37.
+`migration_test.js` draait de migratie daarom bewust op een UTC-verbinding.
+
 **Uren wijzigen op een live database** doe je niet door `db/seed.sql` opnieuw te
 draaien. Sessies zijn gematerialiseerd: er staan al echte rijen in `sessions`
 voor elke datum die ooit opgevraagd is. Gebruik `006_update_schedule.sql` als
@@ -812,6 +821,26 @@ Een gebruikte cadeaubon blijft bij "enkel terugbetalen" bewust ongemoeid: de
 boeking gaat door, dus de bon is wel degelijk verzilverd. Enkel bij een
 annulering gaat het bonsaldo terug. Terugbetalen kan enkel als Admin, en enkel
 op een boeking die al betaald is.
+
+## Weekagenda — hoe een boeking getoond wordt
+
+Gekozen ontwerp (Robin, aug 2026): het raster van vier rooms blijft, want elke
+room houdt zo zijn herkenbare plaats van links naar rechts (M, VL, VR, A). Wat er
+veranderde:
+
+- **Vrije cellen zijn discreet**: gestippelde rand, halftransparant, alleen de
+  roomcode. Ze zijn in de meerderheid en trokken evenveel aandacht als een echte
+  boeking.
+- **Een geboekte cel krijgt dubbele breedte.** In `buildRoomGrid()` weegt een
+  boeking 2 en een vrije room 1. Bij één boeking op vier rooms wordt dat 40% voor
+  de boeking en 20% per vrije room — genoeg voor een naam. Bij een volle sessie
+  zijn alle cellen weer even breed. De volgorde van de rooms verandert nooit.
+- **De naam staat erop, afgekort tot voornaam + beginletter**: "Els Peeters"
+  wordt "Els P.", "Ann de Velde" wordt "Ann V." (tussenvoegsels tellen niet mee
+  als achternaam). De volledige naam, groepsgrootte, room en workshop staan in de
+  tooltip en voluit in het detailvenster.
+- **De workshopnaam staat niet meer in de cel** — die paste toch niet en is af te
+  lezen aan de kleur (terracotta = Action Painting, blauw = Fluid Art).
 
 ## Aantal personen in de weekagenda
 
@@ -952,6 +981,8 @@ db/
   migrations/006_update_schedule.sql        uurrooster Action Painting bijwerken (vrijdag, donderdag vanaf 01/09)
   migrations/007_session_exceptions.sql     losse uitzonderingen: vr 02/10/2026 16:30 wordt 17:30
   check-schema-state.sql   leesbare diagnose: welke migraties zijn nog niet gedraaid?
+  check-sessions.sql       leesbare diagnose: alle toekomstige sessies + waar staan er dubbels?
+  reset-sessions.sql       WIST alle sessies, boekingen en betalingen (cadeaubonnen en klanten blijven)
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
   store-sql.js       de echte, SQL-gebaseerde implementatie (in gebruik door de API)

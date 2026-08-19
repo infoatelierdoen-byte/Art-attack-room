@@ -18,6 +18,22 @@
 --
 -- Uitvoeren via de Neon SQL-editor, of met:
 --   psql "$DATABASE_URL" -f db/migrations/006_update_schedule.sql
+
+-- ===========================================================================
+-- VERPLICHT — tijdzone vastzetten voor deze sessie.
+-- ===========================================================================
+-- start_datetime is een TIMESTAMPTZ. Een cast als ::time of ::date rekent dat
+-- eerst om naar de tijdzone-instelling van de SERVER, niet naar die van de
+-- applicatie. Neon staat standaard op UTC; dan geeft een sessie van 13:30
+-- Brusselse tijd bij ::time gewoon 11:30 terug, matcht geen enkele vergelijking
+-- hieronder, en beschouwt de migratie ELKE sessie als "buiten het rooster".
+-- Getest: op UTC zou deze migratie 37 van de 37 toekomstige sessies als fout
+-- aanmerken, op Europe/Brussels 0 van de 37.
+--
+-- SET TIME ZONE geldt enkel voor deze verbinding en verandert niets aan de
+-- database zelf.
+SET TIME ZONE 'Europe/Brussels';
+
 --
 -- ===========================================================================
 -- LEES DIT EERST — draai stap 0 apart en bekijk het resultaat.

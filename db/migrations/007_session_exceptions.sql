@@ -8,6 +8,22 @@
 --
 --   psql "$DATABASE_URL" -f db/migrations/007_session_exceptions.sql
 
+-- ===========================================================================
+-- VERPLICHT — tijdzone vastzetten voor deze sessie.
+-- ===========================================================================
+-- start_datetime is een TIMESTAMPTZ. Een cast als ::time of ::date rekent dat
+-- eerst om naar de tijdzone-instelling van de SERVER, niet naar die van de
+-- applicatie. Neon staat standaard op UTC; dan geeft een sessie van 13:30
+-- Brusselse tijd bij ::time gewoon 11:30 terug, matcht geen enkele vergelijking
+-- hieronder, en beschouwt de migratie ELKE sessie als "buiten het rooster".
+-- Getest: op UTC zou deze migratie 37 van de 37 toekomstige sessies als fout
+-- aanmerken, op Europe/Brussels 0 van de 37.
+--
+-- SET TIME ZONE geldt enkel voor deze verbinding en verandert niets aan de
+-- database zelf.
+SET TIME ZONE 'Europe/Brussels';
+
+
 -- ---------------------------------------------------------------------------
 -- Vrijdag 02/10/2026: 16:30 wordt 17:30
 --

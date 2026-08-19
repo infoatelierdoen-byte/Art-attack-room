@@ -116,11 +116,23 @@ function buildRoomGrid(dayEvents, roomOrder) {
     const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
     const height = (slot.durationMin / 60) * HOUR_PX;
 
-    roomOrder.forEach((room, idx) => {
-      const left = `calc(${(idx / roomOrder.length) * 100}% + 2px)`;
-      const width = `calc(${100 / roomOrder.length}% - 4px)`;
+    // Breedte naar belang verdelen in plaats van vier gelijke kolommen. Een
+    // dagkolom is maar ~170px breed; vier gelijke cellen geven een veertigtal
+    // pixels elk, te weinig voor een naam. Een geboekte cel weegt daarom dubbel
+    // zo zwaar als een vrije. De VOLGORDE van de rooms blijft ongewijzigd, dus
+    // M staat nog altijd links en A rechts.
+    const inhoud = roomOrder.map(room => {
       const booking = roomEvents.find(e => e.start === slot.start && e.roomCode === room.id);
       const closed = closedEvents.find(e => e.start === slot.start && e.roomCode === room.id);
+      return { room, booking, closed, gewicht: booking ? 2 : 1 };
+    });
+    const totaal = inhoud.reduce((som, c) => som + c.gewicht, 0);
+
+    let gepasseerd = 0;
+    inhoud.forEach(({ room, booking, closed, gewicht }) => {
+      const left = `calc(${(gepasseerd / totaal) * 100}% + 2px)`;
+      const width = `calc(${(gewicht / totaal) * 100}% - 4px)`;
+      gepasseerd += gewicht;
       if (booking) {
         cells.push({ key: `${slot.start}-${room.id}`, kind: "booking", top, height, left, width, ev: booking, roomLabel: room.label });
       } else if (closed) {
@@ -620,6 +632,18 @@ export default function Backend() {
 
   // --- Boeking annuleren (bv. foute testboeking opruimen) ---
 
+  // "Els Peeters" -> "Els P."  ·  "Familie Vandenberghe" -> "Familie V."
+  // Eén woord blijft ongewijzigd. Tussenvoegsels ("de", "van", "van den") tellen
+  // niet als achternaam, anders zou "Ann de Velde" eindigen op "Ann d.".
+  function shortenName(full) {
+    const delen = String(full).trim().split(/\s+/).filter(Boolean);
+    if (delen.length < 2) return full;
+    const tussen = new Set(["de","den","der","van","vande","vanden","vander","le","la","du","het","ter","ten"]);
+    let i = delen.length - 1;
+    while (i > 0 && tussen.has(delen[i].toLowerCase())) i--;
+    return `${delen[0]} ${delen[i][0].toUpperCase()}.`;
+  }
+
   function openDetail(ev) {
     setDetailTarget(ev);
     setDetailError("");
@@ -890,19 +914,26 @@ export default function Backend() {
     let cls = ev.visibility === "private" ? `${base} private-visible` : base;
     if (ev.pendingConfirmation) cls += " pending-reservation";
     const label = ev.customer || serviceLabel(ev.service);
+    // Roomcellen in de weekweergave zijn maar een veertigtal pixels breed. Een
+    // volledige naam wordt daar toch afgekapt, en dan liever op een plek die we
+    // zelf kiezen: voornaam + beginletter van de achternaam. De volledige naam
+    // blijft beschikbaar als tooltip (title) en staat voluit in het detailvenster.
+    const shortName = ev.customer ? shortenName(ev.customer) : label;
     // Het aantal personen staat apart als `count` en wordt als vast badge
     // rechtsboven in het blok getoond, NIET als deel van de tekstregel. In een
     // weekweergave zijn de kolommen smal: stond het achteraan de regel
     // ("Action Painting · 2p"), dan viel precies dat stuk als eerste weg door de
     // afkapping. Nu is het altijd leesbaar, hoe smal de kolom ook is.
+    // Enkel een aantal tonen als er ECHT iemand geboekt heeft. Een lege sessie
+    // toonde vroeger "0p", wat gewoon ruis is in een kolom vol vrije cellen.
     const count = ev.customer
       ? `${ev.partySize}p`
-      : (ev.booked != null ? `${ev.booked}p` : null);
+      : (ev.booked > 0 ? `${ev.booked}p` : null);
     let sub = ev.customer
       ? serviceLabel(ev.service)
       : `${ev.booked ?? 0}/${ev.capacity ?? "-"}`;
     if (ev.pendingConfirmation) sub += " · reservering";
-    return { cls, label, sub, count };
+    return { cls, label, shortName, sub, count };
   }
 
   if (authRole === null) {
@@ -1070,17 +1101,28 @@ export default function Backend() {
                             );
                           }
                           const v = eventVisual(cell.ev);
+                          // Roomcel: roomcode bovenaan (vaste plaats per room),
+                          // daaronder de naam en het aantal personen. De
+                          // workshopnaam staat hier bewust NIET meer — die paste
+                          // toch niet en is af te lezen aan de kleur.
                           return (
                             <div
                               key={cell.key}
-                              className={`cal-event ${v.cls}${cell.ev.pendingConfirmation || cell.ev.bookingId ? " clickable" : ""}`}
+                              className={`cal-event cal-room-booked ${v.cls}${cell.ev.pendingConfirmation || cell.ev.bookingId ? " clickable" : ""}`}
                               style={{ top: cell.top, height: cell.height, left: cell.left, width: cell.width }}
                               onClick={() => handleEventClick(cell.ev)}
-                              title={cell.ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (cell.ev.bookingId ? "Klik voor details / annuleren" : undefined)}
+                              title={[
+                                cell.ev.customer,
+                                cell.ev.partySize != null ? `${cell.ev.partySize} personen` : null,
+                                cell.roomLabel ? `room ${cell.roomLabel}` : null,
+                                serviceLabel(cell.ev.service),
+                                cell.ev.pendingConfirmation ? "— klik om te bevestigen" : "— klik voor details"
+                              ].filter(Boolean).join(" · ")}
                             >
-                              <div className="cal-event-label">{v.label}</div>
+                              {cell.roomLabel && <div className="cal-room-code">{cell.roomLabel}</div>}
+                              <div className="cal-event-label">{v.shortName}</div>
                               {v.count && <span className="cal-event-count">{v.count}</span>}
-                              {v.sub && <div className="cal-event-sub">{v.sub}</div>}
+                              {cell.ev.pendingConfirmation && <div className="cal-event-sub">reservering</div>}
                             </div>
                           );
                         })}
@@ -1792,10 +1834,24 @@ const css = `
   .finder-row-main { font-size: 13px; font-weight: 700; }
   .finder-row-sub { font-size: 11px; color: var(--admin-text-muted); }
   .cal-room-cell { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 10px; overflow: hidden; box-sizing: border-box; border: 1px solid var(--admin-line); }
-  .cal-room-cell.free { background: var(--admin-surface); }
+  /* Vrije cellen bewust discreet: ze zijn in de meerderheid en trokken evenveel
+     aandacht als een echte boeking. Alleen de roomcode blijft goed leesbaar,
+     zodat elke room zijn herkenbare vaste plaats houdt. */
+  .cal-room-cell.free { background: transparent; border-style: dashed; opacity: 0.5; }
+  .cal-room-cell.free .cal-room-sub { font-size: 9px; }
   .cal-room-cell.closed { background: repeating-linear-gradient(45deg, #EDEAE2, #EDEAE2 5px, #E1DCD0 5px, #E1DCD0 10px); color: #8A8375; }
   .cal-room-label { font-weight: 700; }
   .cal-room-sub { opacity: 0.75; }
+  /* Geboekte roomcel: code bovenaan op een vaste plaats, dan de (afgekorte)
+     naam, dan het aantal personen. */
+  .cal-room-booked { display: flex; flex-direction: column; gap: 1px; padding: 3px 4px; }
+  .cal-room-code { font-size: 9px; font-weight: 700; opacity: 0.65; line-height: 1.2; letter-spacing: 0.04em; }
+  /* De naam mag over meerdere regels: een roomcel is maar ~35px breed maar wel
+     ~90px hoog. "Els P." over twee regels leest nog altijd beter dan "E…" op
+     één regel. overflow-wrap breekt desnoods binnen een lang woord af. */
+  .cal-room-booked .cal-event-label { font-size: 10.5px; line-height: 1.2; white-space: normal;
+    overflow-wrap: break-word; }
+  .cal-room-booked .cal-event-count { align-self: flex-start; font-size: 10px; padding: 0 4px; margin-top: 1px; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px 0; }
   .modal { background: var(--admin-surface); color: var(--admin-text); padding: 20px; border-radius: 12px; width: 340px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .modal input, .modal select, .modal textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--admin-line); background: var(--admin-surface); color: var(--admin-text); font-family: inherit; width: 100%; box-sizing: border-box; }

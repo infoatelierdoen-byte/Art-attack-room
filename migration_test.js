@@ -105,8 +105,17 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
   });
   log("Testboeking op vrijdag 13:30 aangemaakt", !!slot1330 && !!vrB.id);
 
-  // De migratie draaien.
-  await p.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8"));
+  // De migratie draaien op een verbinding die op UTC staat — zoals Neon
+  // standaard doet. Zonder de SET TIME ZONE bovenaan de migratie zou ::time hier
+  // omgerekende UTC-uren teruggeven, matcht geen enkele vergelijking, en wordt
+  // ELKE lege toekomstige sessie verwijderd. Dat is één keer echt misgegaan op
+  // de live database (aug 2026), vandaar dat deze test bewust op UTC draait.
+  const utc = await p.connect();
+  await utc.query("SET TIME ZONE 'UTC'");
+  const {rows: tzVoor} = await utc.query("SHOW TimeZone");
+  log("Migratietest draait op een UTC-verbinding (zoals Neon)", tzVoor[0].TimeZone === "UTC", tzVoor[0].TimeZone);
+  await utc.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8"));
+  utc.release();
 
   const { rows: regels } = await p.query(
     `SELECT rr.weekday, rr.start_time::text AS t, rr.anchor_date, rr.end_date FROM recurrence_rules rr
@@ -177,8 +186,50 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
 
   // Idempotent.
   let ok6 = true;
-  try { await p.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8")); } catch(e){ ok6=false; console.log("   "+e.message); }
+  try {
+    const u2 = await p.connect();
+    await u2.query("SET TIME ZONE 'UTC'");
+    await u2.query(fs.readFileSync(path.join(P,"db/migrations/006_update_schedule.sql"),"utf8"));
+    u2.release();
+  } catch(e){ ok6=false; console.log("   "+e.message); }
   log("006 is idempotent", ok6);
+
+  // ================================================================
+  // reset-sessions.sql — draait hij, en blijft het juiste staan?
+  // ================================================================
+  const {rows: voorReset} = await p.query(`
+    SELECT (SELECT COUNT(*)::int FROM sessions) AS sessies,
+           (SELECT COUNT(*)::int FROM bookings) AS boekingen,
+           (SELECT COUNT(*)::int FROM gift_cards) AS bonnen,
+           (SELECT COUNT(*)::int FROM customers) AS klanten,
+           (SELECT COUNT(*)::int FROM recurrence_rules) AS regels`);
+  log("Voor de reset staan er sessies en boekingen in", voorReset[0].sessies > 0 && voorReset[0].boekingen > 0,
+      `${voorReset[0].sessies} sessies, ${voorReset[0].boekingen} boekingen`);
+
+  await p.query(fs.readFileSync(path.join(P,"db/reset-sessions.sql"),"utf8"));
+
+  const {rows: naReset} = await p.query(`
+    SELECT (SELECT COUNT(*)::int FROM sessions) AS sessies,
+           (SELECT COUNT(*)::int FROM bookings) AS boekingen,
+           (SELECT COUNT(*)::int FROM payments) AS betalingen,
+           (SELECT COUNT(*)::int FROM room_bookings) AS rooms,
+           (SELECT COUNT(*)::int FROM gift_cards) AS bonnen,
+           (SELECT COUNT(*)::int FROM customers) AS klanten,
+           (SELECT COUNT(*)::int FROM recurrence_rules) AS regels`);
+  log("Reset wist alle sessies", naReset[0].sessies === 0, naReset[0].sessies);
+  log("Reset wist alle boekingen", naReset[0].boekingen === 0, naReset[0].boekingen);
+  log("Reset wist alle betalingen en room-toewijzingen",
+      naReset[0].betalingen === 0 && naReset[0].rooms === 0);
+  log("Cadeaubonnen blijven staan", naReset[0].bonnen === voorReset[0].bonnen, `${naReset[0].bonnen} van ${voorReset[0].bonnen}`);
+  log("Klanten blijven staan", naReset[0].klanten === voorReset[0].klanten, `${naReset[0].klanten} van ${voorReset[0].klanten}`);
+  log("Het uurrooster blijft staan", naReset[0].regels === voorReset[0].regels, `${naReset[0].regels} regels`);
+
+  // En het belangrijkste: de sessies komen vanzelf terug uit het rooster.
+  const dagNa = new Date(); dagNa.setDate(dagNa.getDate() + 7);
+  const isoNa = dagNa.toISOString().slice(0,10);
+  const avNa2 = await store6.getAvailability("action_painting", isoNa, 2);
+  log("Sessies worden vanzelf opnieuw aangemaakt bij het opvragen van een datum",
+      avNa2.length > 0, `${avNa2.length} tijdsloten op ${isoNa}`);
 
   // Zie de toelichting in giftcard_test.js: verbindingen netjes sluiten vóór de
   // embedded server stopt, anders eindigt een geslaagde run toch met exit-code 1.
