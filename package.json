@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node reservation_test.js && node giftcard_test.js"
+    "test": "node reservation_test.js && node giftcard_test.js && node migration_test.js"
   },
   "dependencies": {
     "@mollie/api-client": "4.6.0",

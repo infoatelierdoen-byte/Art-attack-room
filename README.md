@@ -690,6 +690,77 @@ terracotta (`#C1653A`, was roze), en het lettertype naar
 [Quicksand](https://fonts.google.com/specimen/Quicksand) (Google Fonts,
 geladen via `pages/_document.js`) i.p.v. de standaard systeemfont.
 
+## Migraties draaien op de live database — volgorde
+
+Niet elke feature kreeg destijds een migratie: de cadeaubon-functionaliteit is
+enkel aan `db/schema.sql` toegevoegd. Een database die daarvóór aangemaakt is,
+mist die tabellen en geeft bij het opslaan van een boeking:
+
+```
+column "gift_card_id" of relation "bookings" does not exist
+```
+
+Weet je niet meer wat je al gedraaid hebt? Plak `db/check-schema-state.sql` in de
+Neon SQL-editor — die verandert niets en zegt per migratie of ze al toegepast is.
+
+De volgorde voor een bestaande live database:
+
+1. `001_add_refund_tracking.sql`
+2. `002_add_staff_shifts.sql`
+3. `003_rename_action_painting.sql`
+4. **`005_add_gift_cards_to_existing_db.sql`** — ja, 005 vóór 004
+5. `004_gift_card_hardening.sql`
+
+Alle vijf zijn idempotent: opnieuw draaien kan geen kwaad. 004 controleert zelf
+of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
+`migration_test.js` (deel van `npm test`) bootst precies deze situatie na en
+controleert de hele keten.
+
+## Veiligheid — wat er in v38 veranderd is
+
+Na de veiligheidscheck van 19-08-2026 (zie `veiligheidsrapport-booking-mvp.md`)
+zijn de volgende zaken gewijzigd. Twee ervan veranderen bestaand gedrag, dus lees
+die eerst.
+
+**Cadeaubonnen worden nu bij het BOEKEN afgeschreven, niet pas bij betaling.**
+Dat was de zwaarste bevinding: zolang het saldo pas bij de betaling afging, kon
+dezelfde bon onbeperkt hergebruikt worden door eerst meerdere boekingen aan te
+maken en pas daarna te betalen. Getest gaf één bon van €120 zo €600 aan korting.
+Gevolg voor jou: wordt een boeking geannuleerd, dan wordt het bedrag automatisch
+teruggezet op de bon (dat was vroeger manueel werk). Een klant die afhaakt na het
+boekingsformulier houdt zijn saldo dus niet meteen terug — dat komt pas vrij bij
+annulering.
+
+**De vervaldatum van een cadeaubon wordt nu effectief gecontroleerd.** Die werd
+wel opgeslagen en gemaild, maar nergens vergeleken met vandaag. Let op bij de
+geïmporteerde Wix- en FareHarbor-bonnen: bonnen met een `expires_at` in het
+verleden worden vanaf nu geweigerd. Wil je die toch nog aanvaarden, zet dan hun
+`expires_at` op `NULL` (= verloopt niet).
+
+Verder, zonder gevolgen voor het dagelijks gebruik:
+
+- De ongecontroleerde `applyLoyaltyDiscount`-vlag is verwijderd — die gaf 10%
+  korting aan wie het veld zelf in de request meestuurde.
+- Cadeaubon-endpoints vereisen nu de **Admin**-rol (waren enkel `requireStaff`,
+  dus toegankelijk met het gast-wachtwoord). Ook een plafond van €500 op
+  handmatig aangemaakte bonnen, zoals online al gold.
+- Codes zijn nu 10 tekens en komen uit `crypto.randomInt()` in plaats van
+  `Math.random()`. Bestaande codes van 8 tekens blijven gewoon werken.
+- De klantenexport neutraliseert formules (`=`, `+`, `-`, `@`) zodat een naam uit
+  het boekingsformulier niets kan uitvoeren wanneer je de CSV in Excel opent.
+- Ontbreken `DATABASE_URL`, `MOLLIE_API_KEY` of de `GMAIL_*`-variabelen in
+  productie, dan faalt de app nu luid in plaats van stilletjes terug te vallen op
+  de testdatabase, op "elke betaling is gelukt", of op het loggen van de volledige
+  mailinhoud.
+- Migratie `004_gift_card_hardening.sql` zet een unieke index op
+  `mollie_payment_id` (een dubbele webhook maakte anders twee bonnen van één
+  betaling) en een `CHECK` die een negatief saldo onmogelijk maakt.
+
+Nog **niet** opgelost, in volgorde van belang: onbetaalde boekingen blijven de
+agenda blokkeren (een script kan je kalender ongeauthenticeerd volzetten), er is
+geen rate limiting op `POST /api/bookings` of op de login, en e-mailadressen
+worden serverside niet gevalideerd.
+
 ## Foto's vervangen of toevoegen
 
 De sfeerfoto's staan als gewone bestanden in `public/images/`:
@@ -766,6 +837,9 @@ db/
   import-gift-cards.sql    eenmalige import van de 355 bestaande cadeaubonnen (Wix + FareHarbor)
   migrations/002_add_staff_shifts.sql  eenmalig uit te voeren tegen een bestaande live-database
   migrations/003_rename_action_painting.sql  idem, hernoemt de workshop op een bestaande live-database
+  migrations/004_gift_card_hardening.sql     idem, unieke index op mollie_payment_id + CHECK saldo >= 0
+  migrations/005_add_gift_cards_to_existing_db.sql  cadeaubon-tabellen/kolommen op een oudere live-database (DRAAI DIT VÓÓR 004)
+  check-schema-state.sql   leesbare diagnose: welke migraties zijn nog niet gedraaid?
 lib/
   db.js             databaseverbinding (pg-mem lokaal, echte pg met DATABASE_URL)
   store-sql.js       de echte, SQL-gebaseerde implementatie (in gebruik door de API)

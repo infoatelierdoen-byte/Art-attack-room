@@ -266,8 +266,7 @@ export default function Widget() {
           </div>
           <div className="abr-tile-overlay">
             <p className="abr-tile-title">Action Painting</p>
-            <p className="abr-tile-sub">Graffiti-ervaring</p>
-          </div>
+            </div>
         </div>
 
         <div
@@ -286,8 +285,7 @@ export default function Widget() {
           </div>
           <div className="abr-tile-overlay">
             <p className="abr-tile-title">Fluid Art</p>
-            <p className="abr-tile-sub">Acrylgieten</p>
-          </div>
+            </div>
         </div>
 
         {/* Tijdelijke derde tegel zolang Spin Art nog niet live is (Robin,
@@ -300,8 +298,7 @@ export default function Widget() {
           </div>
           <div className="abr-tile-overlay">
             <p className="abr-tile-title">Cadeaubon</p>
-            <p className="abr-tile-sub">Verras iemand</p>
-          </div>
+            </div>
         </a>
       </div>
 
@@ -513,8 +510,7 @@ const layoutCss = `
   .abr-tile-img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
   .abr-tile-placeholder-label { color: rgba(255,255,255,0.55); font-size: 13px; border: 1.5px dashed rgba(255,255,255,0.3); padding: 10px 16px; border-radius: 8px; }
   .abr-tile-overlay { position: relative; z-index: 1; width: 100%; box-sizing: border-box; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0) 65%); }
-  .abr-tile-title { color: #fff; font-size: 18px; font-weight: 500; margin: 0 0 4px; }
-  .abr-tile-sub { color: rgba(255,255,255,0.78); font-size: 12px; margin: 0; }
+  .abr-tile-title { color: #fff; font-size: 26px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
 
   .abr-mode-landing .abr-layout { display: none; }
   .abr-layout { display: flex; flex-direction: column; }

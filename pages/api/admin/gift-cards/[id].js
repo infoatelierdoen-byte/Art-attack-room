@@ -8,7 +8,13 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "PATCH");
     return res.status(405).json({ error: "Method not allowed" });
   }
-  if (!requireStaff(req, res)) return;
+  // Enkel Admin — uitschakelen neemt een klant zijn tegoed af, en heractiveren
+  // kan een opgebruikte bon weer inzetbaar maken. Zie gift-cards.js.
+  const session = requireStaff(req, res);
+  if (!session) return;
+  if (session.role !== "admin") {
+    return res.status(403).json({ error: "Enkel toegankelijk voor Admin." });
+  }
 
   try {
     const { id } = req.query;

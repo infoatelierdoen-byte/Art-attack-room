@@ -182,7 +182,7 @@ CREATE TABLE gift_cards (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code                TEXT NOT NULL UNIQUE,
     initial_amount      NUMERIC(8,2) NOT NULL,
-    remaining_amount    NUMERIC(8,2) NOT NULL,
+    remaining_amount    NUMERIC(8,2) NOT NULL CHECK (remaining_amount >= 0),
     status              gift_card_status NOT NULL DEFAULT 'active',
     purchaser_name      TEXT,
     purchaser_email     TEXT,
@@ -195,6 +195,14 @@ CREATE TABLE gift_cards (
 );
 
 CREATE INDEX idx_gift_cards_code ON gift_cards(code);
+CREATE INDEX idx_gift_cards_expires_at ON gift_cards(expires_at);
+
+-- Eén Mollie-betaling = hoogstens één cadeaubon. Zonder deze index kunnen twee
+-- webhook-aanroepen die vlak na elkaar binnenkomen allebei een bon aanmaken
+-- (Mollie doet dat bij retries). Partieel, want manuele en geïmporteerde bonnen
+-- hebben geen mollie_payment_id. Zie db/migrations/004_gift_card_hardening.sql.
+CREATE UNIQUE INDEX uq_gift_cards_mollie_payment_id
+  ON gift_cards(mollie_payment_id) WHERE mollie_payment_id IS NOT NULL;
 
 -- ---------------------------------------------------------
 -- Boekingen: 1 rij per reservatie (= 1 groep) op een sessie

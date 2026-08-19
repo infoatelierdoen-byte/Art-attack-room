@@ -119,17 +119,24 @@ async function main() {
     log("Mollie payment created (mock) for remainder", !!p2.id && !!p2.checkoutUrl);
 
     const { rows: cardAfter2 } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [card1.id]);
-    log("Gift card NOT yet deducted before payment confirmation (still 30)", Number(cardAfter2[0].remaining_amount) === 30);
+    // GEWIJZIGD GEDRAG (veiligheidscheck 19-08-2026): het saldo gaat er nu
+    // METEEN af, niet pas bij betaling. Zolang het pas bij de betaling gebeurde,
+    // kon dezelfde bon onbeperkt hergebruikt worden door eerst meerdere
+    // boekingen aan te maken en pas daarna te betalen. Zie de regressietest
+    // "double-spend" verderop.
+    log("Gift card meteen afgeboekt bij het boeken (30 -> 0)", Number(cardAfter2[0].remaining_amount) === 0, cardAfter2[0].remaining_amount);
+    log("Gift card status meteen 'depleted'", cardAfter2[0].status === "depleted", cardAfter2[0].status);
 
     const { rows: bookingRow2 } = await pool.query("SELECT * FROM bookings WHERE id = $1", [b2.id]);
     log("Booking2 payment_status still pending", bookingRow2[0].payment_status === "pending");
-    log("Booking2 has gift_card_amount stored for deferred redemption", Number(bookingRow2[0].gift_card_amount) === 30);
+    log("Booking2 has gift_card_amount stored", Number(bookingRow2[0].gift_card_amount) === 30);
+    log("Booking2 gift_card_redeemed_at meteen gezet", !!bookingRow2[0].gift_card_redeemed_at);
 
     // Now confirm payment (as the Mollie webhook would).
     await store.markBookingPaid(b2.id);
 
     const { rows: cardAfter3 } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [card1.id]);
-    log("Gift card depleted after markBookingPaid (30 -> 0)", Number(cardAfter3[0].remaining_amount) === 0, cardAfter3[0].remaining_amount);
+    log("Saldo blijft 0 na markBookingPaid (geen dubbele afboeking)", Number(cardAfter3[0].remaining_amount) === 0, cardAfter3[0].remaining_amount);
     log("Gift card status flipped to depleted", cardAfter3[0].status === "depleted", cardAfter3[0].status);
 
     // Idempotency: calling markBookingPaid again must not double-deduct.
@@ -239,6 +246,128 @@ async function main() {
     const expires = new Date(fulfilled.expires_at);
     const days = Math.round((expires - created) / 86400000);
     log("New gift card expires ~1 year later", days >= 360 && days <= 370, `days=${days}`);
+
+    // ================================================================
+    // Test 9-13: regressietests bij de veiligheidscheck van 19-08-2026.
+    // Elk van deze tests faalt op de code van vóór die fix.
+    // ================================================================
+
+    // --- Test 9: double-spend. DE kernbevinding.
+    // Vroeger werd een bon pas bij BETALING afgeboekt. Wie dus eerst meerdere
+    // boekingen aanmaakte en pas daarna betaalde, kreeg elke keer opnieuw de
+    // volle korting. Hier: een bon van 60 tegen Fluid Art à 60pp x 1 = 60,
+    // drie keer na elkaar geboekt zonder ook maar iets te betalen.
+    const dsCard = await store.createManualGiftCard({ amount: 60, purchaserName: "Double Spend", purchaserEmail: "ds@test.be" });
+    const dsSlots = [];
+    for (let i = 1; i <= 40 && dsSlots.length < 3; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const avail = await store.getAvailability("fluid_art", iso, 1);
+      const free = avail.find(sl => sl.bookable);
+      if (free) dsSlots.push({ iso, start: free.start });
+    }
+
+    let dsAccepted = 0;
+    for (const slot of dsSlots) {
+      try {
+        await store.createBooking({
+          serviceCode: "fluid_art", dateISO: slot.iso, start: slot.start, partySize: 1,
+          customer: { name: "DS Klant", email: "ds.klant@test.be", phone: "0470000009", birthDate: "1990-01-01" },
+          note: "", termsAccepted: true, marketingOptIn: false,
+          giftCardCode: dsCard.code
+        });
+        dsAccepted++;
+      } catch (err) {
+        // verwacht vanaf de tweede poging: saldo is op
+      }
+    }
+    const { rows: dsAfter } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [dsCard.id]);
+    log("Double-spend geblokkeerd: slechts 1 van 3 onbetaalde boekingen aanvaard", dsAccepted === 1, `aanvaard=${dsAccepted}/${dsSlots.length}`);
+    log("Double-spend: saldo exact 0, niet negatief", Number(dsAfter[0].remaining_amount) === 0, dsAfter[0].remaining_amount);
+    const { rows: dsRedemptions } = await pool.query("SELECT * FROM discount_redemptions WHERE code = $1", [dsCard.code]);
+    log("Double-spend: precies 1 verzilvering geregistreerd", dsRedemptions.length === 1, dsRedemptions.length);
+
+    // --- Test 10: een vervallen bon wordt geweigerd.
+    // expires_at werd wel gezet en getoond, maar nergens vergeleken met vandaag.
+    const expCard = await store.createManualGiftCard({
+      amount: 100, purchaserName: "Vervallen", purchaserEmail: "exp@test.be", expiresAtISO: "2020-01-01"
+    });
+    let expRejected = false;
+    let expSlot = null;
+    for (let i = 1; i <= 40 && !expSlot; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const avail = await store.getAvailability("fluid_art", iso, 1);
+      const free = avail.find(sl => sl.bookable);
+      if (free) expSlot = { iso, start: free.start };
+    }
+    try {
+      await store.createBooking({
+        serviceCode: "fluid_art", dateISO: expSlot.iso, start: expSlot.start, partySize: 1,
+        customer: { name: "Exp Klant", email: "exp.klant@test.be", phone: "0470000010", birthDate: "1990-01-01" },
+        note: "", termsAccepted: true, marketingOptIn: false,
+        giftCardCode: expCard.code
+      });
+    } catch (err) {
+      expRejected = /vervallen/i.test(err.message);
+    }
+    log("Vervallen cadeaubon (2020) geweigerd", expRejected);
+
+    // --- Test 11: de kortingsvlag uit de request-body wordt genegeerd.
+    // applyLoyaltyDiscount gaf ongecontroleerd 10% korting aan wie het veld
+    // zelf meestuurde.
+    let loySlot = null;
+    for (let i = 1; i <= 40 && !loySlot; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const avail = await store.getAvailability("fluid_art", iso, 2);
+      const free = avail.find(sl => sl.bookable);
+      if (free) loySlot = { iso, start: free.start };
+    }
+    const { booking: loyBooking } = await store.createBooking({
+      serviceCode: "fluid_art", dateISO: loySlot.iso, start: loySlot.start, partySize: 2,
+      customer: { name: "Loy Klant", email: "loy@test.be", phone: "0470000011", birthDate: "1990-01-01" },
+      note: "", termsAccepted: true, marketingOptIn: false,
+      applyLoyaltyDiscount: true // <- de aanval
+    });
+    log("applyLoyaltyDiscount genegeerd: volle prijs 120, geen 108", loyBooking.amountDue === 120, `amountDue=${loyBooking.amountDue}`);
+
+    // --- Test 12: annuleren zet het cadeaubonsaldo terug.
+    // Nodig geworden doordat het saldo nu al bij het boeken afgaat.
+    const canCard = await store.createManualGiftCard({ amount: 60, purchaserName: "Annulatie", purchaserEmail: "can@test.be" });
+    let canSlot = null;
+    for (let i = 1; i <= 40 && !canSlot; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const avail = await store.getAvailability("fluid_art", iso, 1);
+      const free = avail.find(sl => sl.bookable);
+      if (free) canSlot = { iso, start: free.start };
+    }
+    const { booking: canBooking } = await store.createBooking({
+      serviceCode: "fluid_art", dateISO: canSlot.iso, start: canSlot.start, partySize: 1,
+      customer: { name: "Can Klant", email: "can.klant@test.be", phone: "0470000012", birthDate: "1990-01-01" },
+      note: "", termsAccepted: true, marketingOptIn: false,
+      giftCardCode: canCard.code
+    });
+    const { rows: canMid } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [canCard.id]);
+    log("Annulatie-scenario: saldo eerst afgeboekt (60 -> 0)", Number(canMid[0].remaining_amount) === 0, canMid[0].remaining_amount);
+    await store.cancelBooking(canBooking.id, { reason: "test" });
+    const { rows: canAfter } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [canCard.id]);
+    log("Annulatie zet saldo terug (0 -> 60)", Number(canAfter[0].remaining_amount) === 60, canAfter[0].remaining_amount);
+    log("Annulatie heractiveert de bon", canAfter[0].status === "active", canAfter[0].status);
+    await store.cancelBooking(canBooking.id, { reason: "test" });
+    const { rows: canTwice } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [canCard.id]);
+    log("Tweede annulatie vult niet nogmaals aan (blijft 60)", Number(canTwice[0].remaining_amount) === 60, canTwice[0].remaining_amount);
+
+    // --- Test 13: bedragplafond en codesterkte.
+    let capRejected = false;
+    try {
+      await store.createManualGiftCard({ amount: 5000, purchaserName: "Te veel", purchaserEmail: "cap@test.be" });
+    } catch (err) {
+      capRejected = /maximum/i.test(err.message);
+    }
+    log("Handmatige bon boven €500 geweigerd", capRejected);
+    log("Cadeauboncode is 10 tekens lang (was 8)", /^AAR-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$/.test(dsCard.code), dsCard.code);
 
     await pool.end();
     // lib/db.js houdt zijn eigen (singleton) pool bij — die moet ook netjes
