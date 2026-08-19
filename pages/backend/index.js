@@ -625,6 +625,31 @@ export default function Backend() {
     setCancelReason("");
   }
 
+  // Terugbetalen zonder te annuleren: de boeking en de room blijven staan.
+  async function submitRefundBooking() {
+    setDetailError("");
+    setDetailSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/refund-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bookingId: detailTarget.bookingId,
+          refundAmount: Number(cancelRefundAmount) || 0,
+          reason: cancelReason
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setDetailTarget(null);
+      load(monday);
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailSubmitting(false);
+    }
+  }
+
   async function submitCancelBooking() {
     setDetailError("");
     setDetailSubmitting(true);
@@ -818,9 +843,19 @@ export default function Backend() {
     let cls = ev.visibility === "private" ? `${base} private-visible` : base;
     if (ev.pendingConfirmation) cls += " pending-reservation";
     const label = ev.customer || serviceLabel(ev.service);
-    let sub = ev.customer ? `${serviceLabel(ev.service)} · ${ev.partySize}p` : `${ev.booked ?? 0}/${ev.capacity ?? "-"}`;
+    // Het aantal personen staat apart als `count` en wordt als vast badge
+    // rechtsboven in het blok getoond, NIET als deel van de tekstregel. In een
+    // weekweergave zijn de kolommen smal: stond het achteraan de regel
+    // ("Action Painting · 2p"), dan viel precies dat stuk als eerste weg door de
+    // afkapping. Nu is het altijd leesbaar, hoe smal de kolom ook is.
+    const count = ev.customer
+      ? `${ev.partySize}p`
+      : (ev.booked != null ? `${ev.booked}p` : null);
+    let sub = ev.customer
+      ? serviceLabel(ev.service)
+      : `${ev.booked ?? 0}/${ev.capacity ?? "-"}`;
     if (ev.pendingConfirmation) sub += " · reservering";
-    return { cls, label, sub };
+    return { cls, label, sub, count };
   }
 
   if (authRole === null) {
@@ -997,6 +1032,7 @@ export default function Backend() {
                               title={cell.ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (cell.ev.bookingId ? "Klik voor details / annuleren" : undefined)}
                             >
                               <div className="cal-event-label">{v.label}</div>
+                              {v.count && <span className="cal-event-count">{v.count}</span>}
                               {v.sub && <div className="cal-event-sub">{v.sub}</div>}
                             </div>
                           );
@@ -1020,6 +1056,7 @@ export default function Backend() {
                               title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (ev.bookingId ? "Klik voor details / annuleren" : undefined)}
                             >
                               <div className="cal-event-label">{v.label}</div>
+                              {v.count && <span className="cal-event-count">{v.count}</span>}
                               {v.sub && <div className="cal-event-sub">{v.sub}</div>}
                             </div>
                           );
@@ -1399,13 +1436,27 @@ export default function Backend() {
             {authRole === "admin" ? (
               <>
                 <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
-                  Annuleren maakt de room terug vrij voor dit tijdslot. Vul hieronder in hoeveel je
-                  terugbetaalt aan de klant — volledig, gedeeltelijk (bv. annuleringskost ingehouden)
-                  of niets. Het behouden bedrag telt nog mee in de wekelijkse omzetfactuur.
+                  Vul hieronder het bedrag in en kies dan onderaan wat er moet gebeuren.
+                  <br />
+                  <strong>Enkel terugbetalen</strong> laat de boeking gewoon staan — de room blijft
+                  bezet en de klant komt langs. Voor een prijscorrectie of een commercieel gebaar.
+                  <br />
+                  <strong>Annuleren</strong> maakt de room weer vrij voor dit tijdslot.
+                  <br />
+                  In beide gevallen telt enkel het behouden bedrag (bedrag min terugbetaling) mee in
+                  de wekelijkse omzetfactuur.
                 </p>
                 {detailTarget.amount != null && (
                   <>
-                    <label className="field-label">Terug te betalen bedrag (max €{detailTarget.amount.toFixed(2)})</label>
+                    {detailTarget.refundedAmount > 0 && (
+                      <p style={{ fontSize: 12, color: "var(--admin-accent)", margin: "6px 0 0" }}>
+                        Al terugbetaald: €{detailTarget.refundedAmount.toFixed(2)} — nog €
+                        {(detailTarget.amount - detailTarget.refundedAmount).toFixed(2)} terugbetaalbaar.
+                      </p>
+                    )}
+                    <label className="field-label">
+                      Bedrag (max €{(detailTarget.amount - (detailTarget.refundedAmount || 0)).toFixed(2)})
+                    </label>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <input
                         type="number" min="0" max={detailTarget.amount} step="0.01"
@@ -1413,7 +1464,7 @@ export default function Backend() {
                         onChange={e => setCancelRefundAmount(e.target.value)}
                         style={{ width: 100 }}
                       />
-                      <button type="button" className="add-btn secondary" onClick={() => setCancelRefundAmount(String(detailTarget.amount))}>Volledig</button>
+                      <button type="button" className="add-btn secondary" onClick={() => setCancelRefundAmount(String(Math.round((detailTarget.amount - (detailTarget.refundedAmount || 0)) * 100) / 100))}>Volledig</button>
                       <button type="button" className="add-btn secondary" onClick={() => setCancelRefundAmount("0")}>Geen</button>
                     </div>
                     <label className="field-label">Reden / notitie (optioneel)</label>
@@ -1433,6 +1484,17 @@ export default function Backend() {
                   </a>
                   <button type="button" className="add-btn secondary" onClick={openRescheduleFromDetail}>
                     Boeking verplaatsen
+                  </button>
+                  <button
+                    type="button"
+                    className="add-btn secondary"
+                    disabled={detailSubmitting || detailTarget.paymentStatus !== "paid"}
+                    title={detailTarget.paymentStatus !== "paid"
+                      ? "Enkel mogelijk bij een betaalde boeking"
+                      : "De boeking blijft staan, de room blijft bezet"}
+                    onClick={submitRefundBooking}
+                  >
+                    {detailSubmitting ? "Bezig…" : "Enkel terugbetalen"}
                   </button>
                   <button
                     type="button"
@@ -1624,6 +1686,13 @@ const css = `
   .cal-event { position: absolute; border-radius: 6px; padding: 4px 6px; font-size: 11px; overflow: hidden; box-sizing: border-box; }
   .cal-event-label { font-weight: 700; }
   .cal-event-sub { opacity: 0.8; }
+  /* Aantal personen: een eigen regel met een pill, bewust NIET absoluut
+     gepositioneerd rechtsboven. In de weekweergave staan de vier rooms naast
+     elkaar in één dagkolom, dus een cel is maar ~35px breed — een badge in de
+     hoek zou daar bovenop de klantnaam vallen. Op een eigen regel blijft het
+     leesbaar, hoe smal de cel ook is. */
+  .cal-event-count { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1.45;
+    padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,0.16); color: inherit; margin: 1px 0; }
   .cal-event.attack { background: #FBE9E1; border-left: 3px solid var(--admin-accent); }
   .cal-event.fluid { background: var(--fluid-bg); border-left: 3px solid var(--fluid); }
   .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); }

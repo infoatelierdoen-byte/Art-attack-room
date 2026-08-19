@@ -716,6 +716,44 @@ of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
 `migration_test.js` (deel van `npm test`) bootst precies deze situatie na en
 controleert de hele keten.
 
+## Terugbetalen zonder te annuleren
+
+In het boekingsdetail (klik een boeking in de weekagenda) staan twee knoppen
+naast elkaar. Het bedrag vul je één keer in, de knop bepaalt wat ermee gebeurt:
+
+| Knop | Boeking | Room | Wanneer |
+| --- | --- | --- | --- |
+| **Enkel terugbetalen** | blijft staan | blijft bezet | prijscorrectie, commercieel gebaar, kleinere groep dan geboekt |
+| **Boeking annuleren** | wordt geannuleerd | komt vrij | klant komt niet |
+
+Gedeeltelijke terugbetalingen tellen op: betaal je eerst €20 terug en later €30,
+dan staat er €50 terugbetaald en blijft de rest terugbetaalbaar. Samen kunnen ze
+nooit meer worden dan het betaalde bedrag. Het scherm toont wat er al
+terugbetaald is en hoeveel er nog kan.
+
+Betaal je alles terug zonder te annuleren, dan gaat `payment_status` naar
+`refunded` maar blijft `status` op `confirmed` — de klant komt immers nog steeds.
+De wekelijkse omzetfactuur rekent met (bedrag − terugbetaald) en houdt hier dus
+vanzelf rekening mee.
+
+Een gebruikte cadeaubon blijft bij "enkel terugbetalen" bewust ongemoeid: de
+boeking gaat door, dus de bon is wel degelijk verzilverd. Enkel bij een
+annulering gaat het bonsaldo terug. Terugbetalen kan enkel als Admin, en enkel
+op een boeking die al betaald is.
+
+## Aantal personen in de weekagenda
+
+Elke bezette cel toont het aantal personen als een pill onder de klantnaam
+(`4p`, `2p`, ...). Bewust op een eigen regel en niet als badge in de hoek: in de
+weekweergave staan de vier rooms naast elkaar in één dagkolom, dus een cel is
+maar een dertigtal pixels breed. Stond het aantal achteraan de tekstregel
+("Action Painting · 4p"), dan viel precies dat stuk als eerste weg door de
+afkapping — dat was ook de klacht die tot deze wijziging leidde.
+
+Bij een dienst zonder room-toewijzing (Fluid Art) toont de cel het totaal aantal
+geboekte personen. Privé-items blijven voor de gast-rol geredigeerd: daar
+verschijnt geen aantal, zoals voorheen.
+
 ## Veiligheid — wat er in v38 veranderd is
 
 Na de veiligheidscheck van 19-08-2026 (zie `veiligheidsrapport-booking-mvp.md`)
@@ -863,6 +901,7 @@ pages/
   api/                     alle API-routes, gebruiken lib/store-sql.js
   api/admin/manual-booking.js       boeking die het team zelf ingeeft (geen Mollie, evt. reserveOnly)
   api/admin/confirm-booking.js      een eerdere reservering alsnog bevestigen (betaald + factuur/cadeaubon)
+  api/admin/refund-booking.js       (deel van het bedrag) terugbetalen ZONDER te annuleren; room blijft bezet
   api/admin/close-room.js           room(s) sluiten voor een tijdslot of hele dag
   api/admin/rooms.js                roomlijst (voor het room-sluiten-scherm)
   api/admin/extra-session.js        eenmalige extra sessie buiten het uurrooster

@@ -135,10 +135,92 @@ async function main() {
     const { rows: cardAfter } = await pool.query("SELECT * FROM gift_cards WHERE id = $1", [card.id]);
     log("Gift card deducted only after confirmation", Number(cardAfter[0].remaining_amount) === 50 - Number(b3.amountDue) - 0 || Number(cardAfter[0].remaining_amount) < 50, cardAfter[0].remaining_amount);
 
+    // ================================================================
+    // Terugbetalen ZONDER annuleren (nieuw, aug 2026)
+    // ================================================================
+    // Nieuwe, betaalde manuele boeking om op te testen.
+    let refSlot = null;
+    for (let i = 1; i <= 40 && !refSlot; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const free = av.find(sl => sl.bookable);
+      if (free) refSlot = { iso, start: free.start };
+    }
+    const { booking: refB } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: refSlot.iso, start: refSlot.start, partySize: 2,
+      customer: { name: "Terugbetaal Klant", email: "refund@test.be", phone: "0470000020" },
+      note: "", paymentMethod: "cash"
+    });
+    log("Testboeking voor terugbetaling aangemaakt (betaald)", refB.amountDue === 120, `amountDue=${refB.amountDue}`);
+
+    // Onbetaalde boeking mag niet terugbetaald worden.
+    const { booking: unpaid } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: refSlot.iso, start: refSlot.start, partySize: 2,
+      customer: { name: "Onbetaald", email: "unpaid@test.be", phone: "0470000021" },
+      note: "", paymentMethod: "transfer", reserveOnly: true
+    });
+    let unpaidRejected = false;
+    try { await store.refundBooking(unpaid.id, { refundAmount: 10 }); }
+    catch (err) { unpaidRejected = /betaalde boeking/i.test(err.message); }
+    log("Terugbetaling geweigerd op een nog niet betaalde boeking", unpaidRejected);
+
+    // Gedeeltelijke terugbetaling.
+    const r1 = await store.refundBooking(refB.id, { refundAmount: 20, reason: "kleinere groep" });
+    log("Gedeeltelijke terugbetaling van €20 geslaagd", r1.refundedTotal === 20, `totaal=${r1.refundedTotal}`);
+    const { rows: afterR1 } = await pool.query("SELECT * FROM bookings WHERE id = $1", [refB.id]);
+    log("Boeking blijft 'confirmed' (niet geannuleerd)", afterR1[0].status === "confirmed", afterR1[0].status);
+    log("Boeking blijft 'paid' na gedeeltelijke terugbetaling", afterR1[0].payment_status === "paid", afterR1[0].payment_status);
+    const { rows: roomStill } = await pool.query("SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [refB.id]);
+    log("Room blijft gereserveerd (plaats komt NIET vrij)", roomStill[0].c === 1);
+    const { rows: negPay } = await pool.query("SELECT * FROM payments WHERE booking_id = $1 AND provider = 'refund'", [refB.id]);
+    log("Negatieve betaalregel geboekt", negPay.length === 1 && Number(negPay[0].amount) === -20, negPay[0] && negPay[0].amount);
+
+    // Tweede gedeeltelijke terugbetaling telt op.
+    const r2 = await store.refundBooking(refB.id, { refundAmount: 30 });
+    log("Tweede terugbetaling telt op tot €50", r2.refundedTotal === 50, `totaal=${r2.refundedTotal}`);
+    log("Resterend terugbetaalbaar bedrag klopt (€70)", r2.remainingRefundable === 70, `rest=${r2.remainingRefundable}`);
+
+    // Meer dan het resterende bedrag mag niet.
+    let overRejected = false;
+    try { await store.refundBooking(refB.id, { refundAmount: 999 }); }
+    catch (err) { overRejected = /maximaal/i.test(err.message); }
+    log("Terugbetaling boven het resterende bedrag geweigerd", overRejected);
+
+    // Nul of negatief mag niet.
+    let zeroRejected = false;
+    try { await store.refundBooking(refB.id, { refundAmount: 0 }); }
+    catch (err) { zeroRejected = /groter dan 0/i.test(err.message); }
+    log("Terugbetaling van €0 geweigerd", zeroRejected);
+
+    // Volledig terugbetalen: status blijft confirmed, payment_status wordt refunded.
+    await store.refundBooking(refB.id, { refundAmount: 70 });
+    const { rows: full } = await pool.query("SELECT * FROM bookings WHERE id = $1", [refB.id]);
+    log("Volledig terugbetaald: payment_status 'refunded'", full[0].payment_status === "refunded", full[0].payment_status);
+    log("Volledig terugbetaald: boeking blijft toch 'confirmed'", full[0].status === "confirmed", full[0].status);
+    let againRejected = false;
+    try { await store.refundBooking(refB.id, { refundAmount: 1 }); }
+    catch (err) { againRejected = /volledig terugbetaald|betaalde boeking/i.test(err.message); }
+    log("Nog een terugbetaling daarna geweigerd", againRejected);
+
+    // De weekagenda geeft het terugbetaalde bedrag mee (voor de backoffice-UI).
+    const refWeek = await store.getWeekSessions(mondayOfISO(refSlot.iso));
+    const refEv = refWeek.find(e => e.bookingId === refB.id);
+    log("Weekagenda geeft refundedAmount mee", refEv && refEv.refundedAmount === 120, refEv && refEv.refundedAmount);
+    log("Weekagenda geeft partySize mee voor het personen-badge", refEv && refEv.partySize === 2, refEv && refEv.partySize);
+
+    // Bij het afsluiten sluit embedded-postgres de server terwijl `pg` soms nog
+    // een inactieve verbinding openhoudt. Die gooit dan een niet-afgevangen
+    // 'error'-event ('terminating connection due to administrator command'),
+    // waardoor het proces met exit-code 1 stopt hoewel alle tests geslaagd zijn —
+    // en bij `npm test` de volgende suite door de && nooit meer draaide.
+    pool.on("error", () => {});
     await pool.end();
     const dbModule = require(path.join(PROJECT, "lib/db.js"));
     const internalPool = await dbModule.getPool();
+    internalPool.on("error", () => {});
     await internalPool.end();
+    await new Promise(r => setTimeout(r, 250)); // verbindingen echt laten sluiten
     console.log("\nAll reservation tests executed.");
   } finally {
     await pg.stop();

@@ -369,6 +369,12 @@ async function main() {
     log("Handmatige bon boven €500 geweigerd", capRejected);
     log("Cadeauboncode is 10 tekens lang (was 8)", /^AAR-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$/.test(dsCard.code), dsCard.code);
 
+    // Bij het afsluiten sluit embedded-postgres de server terwijl `pg` soms nog
+    // een inactieve verbinding openhoudt. Die gooit dan een niet-afgevangen
+    // 'error'-event ('terminating connection due to administrator command'),
+    // waardoor het proces met exit-code 1 stopt hoewel alle tests geslaagd zijn —
+    // en bij `npm test` de volgende suite door de && nooit meer draaide.
+    pool.on("error", () => {});
     await pool.end();
     // lib/db.js houdt zijn eigen (singleton) pool bij — die moet ook netjes
     // sluiten vóór de embedded Postgres-server stopt, anders gooit de
@@ -376,7 +382,9 @@ async function main() {
     // server de resterende verbindingen hard afsluit.
     const dbModule = require(path.join(PROJECT, "lib/db.js"));
     const internalPool = await dbModule.getPool();
+    internalPool.on("error", () => {});
     await internalPool.end();
+    await new Promise(r => setTimeout(r, 250)); // verbindingen echt laten sluiten
     console.log("\nAll gift card tests executed.");
   } finally {
     await pg.stop();

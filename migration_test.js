@@ -67,8 +67,16 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
     customer:{name:"Test",email:"t2@t.be",phone:"047",birthDate:"1990-01-01"}, note:"", termsAccepted:true, marketingOptIn:false, giftCardCode: card.code });
   log("Boeking met cadeaubon slaagt na migratie (de oorspronkelijke fout is weg)", booking.amountDue === 0, `amountDue=${booking.amountDue}`);
 
-  const dbm = require(path.join(P,"lib/db.js")); (await dbm.getPool()).end();
-  await p.end(); await pg.stop();
+  // Zie de toelichting in giftcard_test.js: verbindingen netjes sluiten vóór de
+  // embedded server stopt, anders eindigt een geslaagde run toch met exit-code 1.
+  const dbm = require(path.join(P,"lib/db.js"));
+  const internal = await dbm.getPool();
+  internal.on("error", () => {});
+  await internal.end();
+  p.on("error", () => {});
+  await p.end();
+  await new Promise(r => setTimeout(r, 250));
+  await pg.stop();
   console.log(fails===0 ? "\nAlle migratietests geslaagd." : `\n${fails} test(s) gefaald.`);
   process.exit(fails===0?0:1);
 })().catch(e=>{ console.error("FATAL:", e.message); process.exit(1); });
