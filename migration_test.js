@@ -195,6 +195,50 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
   log("006 is idempotent", ok6);
 
   // ================================================================
+  // Migratie 008 + snelheid: hoeveel databaseverzoeken per scherm?
+  // ================================================================
+  await p.query(fs.readFileSync(path.join(P,"db/migrations/008_unique_session_slot.sql"),"utf8"));
+  const {rows: idx} = await p.query(
+    "SELECT COUNT(*)::int c FROM pg_indexes WHERE indexname = 'uq_sessions_service_start'");
+  log("008 maakt de unieke index op (service_id, start_datetime)", idx[0].c === 1);
+
+  // Een tweede sessie voor dezelfde dienst op hetzelfde moment moet nu falen.
+  const {rows: eenSessie} = await p.query(
+    "SELECT service_id, start_datetime, end_datetime FROM sessions WHERE service_id IS NOT NULL LIMIT 1");
+  let dubbelGeweigerd = false;
+  try {
+    await p.query(
+      `INSERT INTO sessions (kind, service_id, start_datetime, end_datetime) VALUES ('service',$1,$2,$3)`,
+      [eenSessie[0].service_id, eenSessie[0].start_datetime, eenSessie[0].end_datetime]);
+  } catch (e) { dubbelGeweigerd = /duplicate key|unique/i.test(e.message); }
+  log("Dubbele sessie op hetzelfde tijdstip wordt geweigerd", dubbelGeweigerd);
+
+  let ok8 = true;
+  try { await p.query(fs.readFileSync(path.join(P,"db/migrations/008_unique_session_slot.sql"),"utf8")); }
+  catch(e){ ok8=false; console.log("   "+e.message); }
+  log("008 is idempotent", ok8);
+
+  // Elk databaseverzoek is op Neon een aparte netwerkronde. Deze grenzen zijn
+  // bewust ruim maar VAST: gaat er ooit weer een lus met een query per sessie in
+  // sluipen, dan loopt dit meteen op en faalt deze test.
+  const echtePool = await require(path.join(P,"lib/db.js")).getPool();
+  const origQuery = echtePool.query.bind(echtePool);
+  let queryTeller = 0;
+  echtePool.query = (...a) => { queryTeller++; return origQuery(...a); };
+  const tel = async fn => { queryTeller = 0; await fn(); return queryTeller; };
+
+  const {mondayOfISO: maandagVan, addDaysISO: plusDagen} = require(path.join(P,"lib/dateUtils.js"));
+  const maandag = maandagVan(new Date().toISOString().slice(0,10));
+  await store6.getWeekSessions(maandag);                    // eerste keer: sessies aanmaken
+  const qWeek  = await tel(() => store6.getWeekSessions(plusDagen(maandag, 7)));
+  const qMaand = await tel(() => store6.getMonthAvailability("action_painting", 2026, 9, 2));
+  const qDag   = await tel(() => store6.getAvailability("action_painting", "2026-09-05", 2));
+  log("Weekagenda blijft onder 10 databaseverzoeken", qWeek < 10, `${qWeek} queries`);
+  log("Maandkalender blijft onder 12 databaseverzoeken", qMaand < 12, `${qMaand} queries`);
+  log("Eén dag in de widget blijft onder 10 databaseverzoeken", qDag < 10, `${qDag} queries`);
+  echtePool.query = origQuery;
+
+  // ================================================================
   // reset-sessions.sql — draait hij, en blijft het juiste staan?
   // ================================================================
   const {rows: voorReset} = await p.query(`

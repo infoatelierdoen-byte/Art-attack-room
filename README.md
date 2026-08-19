@@ -712,6 +712,7 @@ De volgorde voor een bestaande live database:
 5. `004_gift_card_hardening.sql`
 6. `006_update_schedule.sql`
 7. `007_session_exceptions.sql`
+8. `008_unique_session_slot.sql`
 
 Alle vijf zijn idempotent: opnieuw draaien kan geen kwaad. 004 controleert zelf
 of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
@@ -821,6 +822,33 @@ Een gebruikte cadeaubon blijft bij "enkel terugbetalen" bewust ongemoeid: de
 boeking gaat door, dus de bon is wel degelijk verzilverd. Enkel bij een
 annulering gaat het bonsaldo terug. Terugbetalen kan enkel als Admin, en enkel
 op een boeking die al betaald is.
+
+## Snelheid: databaseverzoeken per scherm
+
+Op Neon is elke query een aparte netwerkronde. Lokaal (pg-mem of een Postgres op
+dezelfde machine) kost dat niets, maar live telt elke query mee — en het waren er
+veel te veel:
+
+| Scherm | vroeger | nu |
+| --- | --- | --- |
+| Weekagenda openen (eerste keer) | 33 | 5 |
+| Weekagenda, week wisselen | 18–31 | 4–5 |
+| Maandkalender in de widget | 79–133 | 6–7 |
+| Eén dag in de widget | 10 | 6 |
+
+Drie plekken deden hetzelfde verkeerd: een lus met één query per sessie of per
+regel per dag.
+
+- `ensureSessionsMaterialized()` deed per dag en per roosterregel een SELECT en
+  eventueel een INSERT. Nu: één SELECT voor het hele bereik, en één INSERT met
+  alle ontbrekende rijen ineens (`ON CONFLICT DO NOTHING`, zie migratie 008).
+- `getAvailability()` en `getMonthAvailability()` vroegen per sessie apart de
+  bezette rooms op. Nu via `occupiedRoomCodesForSessions()` en
+  `bookedPerSession()`, die alle sessies in één query afhandelen.
+
+`migration_test.js` telt de queries en faalt zodra een scherm boven zijn grens
+gaat. Sluipt er ooit weer een lus met een query per sessie in, dan merk je dat
+meteen in plaats van pas op productie.
 
 ## Weekagenda — uitlijning van de uurbalk
 
@@ -999,6 +1027,7 @@ db/
   migrations/005_add_gift_cards_to_existing_db.sql  cadeaubon-tabellen/kolommen op een oudere live-database (DRAAI DIT VÓÓR 004)
   migrations/006_update_schedule.sql        uurrooster Action Painting bijwerken (vrijdag, donderdag vanaf 01/09)
   migrations/007_session_exceptions.sql     losse uitzonderingen: vr 02/10/2026 16:30 wordt 17:30
+  migrations/008_unique_session_slot.sql    unieke index (service_id, start_datetime): geen dubbele tijdsloten meer
   check-schema-state.sql   leesbare diagnose: welke migraties zijn nog niet gedraaid?
   check-sessions.sql       leesbare diagnose: alle toekomstige sessies + waar staan er dubbels?
   reset-sessions.sql       WIST alle sessies, boekingen en betalingen (cadeaubonnen en klanten blijven)

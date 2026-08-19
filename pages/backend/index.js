@@ -1834,7 +1834,12 @@ const css = `
   .mini-cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: transparent; font-size: 12px; color: var(--admin-text); padding: 0; }
   .mini-cal-day:hover { background: var(--admin-hover); }
   .mini-cal-day.outside { color: #C7C2B6; }
-  .mini-cal-day.in-week { background: #FBE9E1; }
+  /* De markering van de getoonde week is een lichte vulling. In het donkere
+     thema bleef de tekstkleur wit staan, waardoor die getallen onleesbaar
+     werden. De tekstkleur wordt hier daarom expliciet donker gezet — die
+     vulling is licht in beide thema's. */
+  .mini-cal-day.in-week { background: #FBE9E1; color: #2A1B14; }
+  .mini-cal-day.outside.in-week { color: #8A8375; }
   .mini-cal-day.today { background: var(--admin-accent); color: #fff; font-weight: 700; }
   .week-body { display: flex; padding: 0 20px 40px; gap: 0; }
   /* padding-top wordt na het renderen gemeten en als inline-stijl gezet, zie

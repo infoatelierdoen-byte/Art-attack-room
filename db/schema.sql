@@ -148,6 +148,14 @@ CREATE INDEX idx_sessions_start ON sessions(start_datetime);
 CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_sessions_kind ON sessions(kind);
 
+-- Eén sessie per dienst per tijdstip. Voorkomt dubbele tijdsloten, en maakt de
+-- ON CONFLICT DO NOTHING mogelijk waarmee ensureSessionsMaterialized() alle
+-- ontbrekende sessies in één INSERT aanmaakt (lib/store-sql.js). Persoonlijke
+-- afspraken hebben geen service_id en vallen er bewust buiten.
+-- Zie db/migrations/008_unique_session_slot.sql.
+CREATE UNIQUE INDEX uq_sessions_service_start
+  ON sessions(service_id, start_datetime) WHERE service_id IS NOT NULL;
+
 -- Belangrijk: een 'personal' sessie heeft NOOIT een rij in bookings/payments.
 -- Het is enkel een geblokkeerd tijdslot in de agenda (geen klant, geen prijs).
 
