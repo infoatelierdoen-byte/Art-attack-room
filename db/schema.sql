@@ -12,7 +12,7 @@ CREATE TYPE room_block_type AS ENUM ('booking', 'closed');
 CREATE TYPE discount_type AS ENUM ('gift_voucher', 'loyalty_points', 'promo_code');
 CREATE TYPE staff_role AS ENUM ('admin', 'guest');
 CREATE TYPE session_visibility AS ENUM ('standard', 'private');
-CREATE TYPE session_kind AS ENUM ('service', 'personal');
+CREATE TYPE session_kind AS ENUM ('service', 'personal', 'block');
 CREATE TYPE gift_card_status AS ENUM ('active', 'disabled', 'depleted');
 
 -- ---------------------------------------------------------
@@ -123,6 +123,10 @@ CREATE TABLE recurrence_rules (
 -- kind = 'personal' -> een eigen, persoonlijke afspraak (bv. "Dokter"),
 --                      NIET gekoppeld aan een service, NOOIT een prijs
 --                      of klant, en altijd visibility = 'private'.
+-- kind = 'block'    -> een tijdsblok dat het team zelf inplant (bv. "Kamp
+--                      voorbereiden"). Zichtbaar mét titel, in het paars.
+--                      Neemt bewust GEEN rooms in en blokkeert GEEN online
+--                      boekingen — daarvoor bestaat "Room(s) sluiten".
 -- ---------------------------------------------------------
 CREATE TABLE sessions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -139,7 +143,8 @@ CREATE TABLE sessions (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT chk_session_kind_service CHECK (
         (kind = 'service' AND service_id IS NOT NULL) OR
-        (kind = 'personal' AND service_id IS NULL)
+        (kind = 'personal' AND service_id IS NULL) OR
+        (kind = 'block' AND service_id IS NULL)
     )
 );
 
@@ -166,7 +171,12 @@ CREATE UNIQUE INDEX uq_sessions_service_start
 CREATE TABLE customers (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name           TEXT NOT NULL,
-    email               TEXT NOT NULL UNIQUE,
+    -- Mag leeg blijven: aan de balie of aan de telefoon heeft niet elke klant
+    -- een e-mailadres bij de hand (Robin, aug 2026). UNIQUE blijft gelden —
+    -- PostgreSQL ziet elke NULL als verschillend, dus meerdere klanten zonder
+    -- e-mail kunnen naast elkaar bestaan. Zonder e-mail vertrekt er uiteraard
+    -- geen bevestigingsmail.
+    email               TEXT UNIQUE,
     phone               TEXT,
     birth_date          DATE,                              -- voor verjaardagsmail
     marketing_opt_in    BOOLEAN NOT NULL DEFAULT TRUE,      -- default aangevinkt bij boeking (bewust gekozen, zie voorstel §8)

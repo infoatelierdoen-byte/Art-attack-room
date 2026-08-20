@@ -77,16 +77,41 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   afspraak zoals "Dokter" toevoegen die altijd privé is en nooit een klant
   of prijs heeft (`sessions.kind = 'personal'`) — apart van een privé
   gemarkeerde, wél betalende groepsboeking.
+- **Tijdsblok** (`/backend` → "Meer acties" → Tijdsblok toevoegen, +
+  `/api/admin/time-block`): een eigen blok in de agenda om zelf iets in te
+  plannen (bv. "Kamp voorbereiden"), met een titel en een begin- en einduur.
+  Het staat in het **paars** en toont gewoon zijn titel — anders dan een
+  persoonlijke afspraak, die privé is en voor de gast-rol enkel "Privé"
+  toont.
+
+  Bewuste keuze (Robin, aug 2026): een tijdsblok neemt **geen room in en
+  blokkeert géén online boekingen**. Klanten kunnen die uren dus nog gewoon
+  boeken. Wil je dat niet, gebruik dan "Room(s) sluiten" — dat blijft een
+  aparte, expliciete handeling, zodat je nooit per ongeluk je eigen agenda
+  dichtzet. Klik op een blok om het aan te passen, rechtermuisklik om het te
+  verwijderen (`sessions.kind = 'block'`).
 - **Manuele boeking** (`/backend` + `/api/admin/manual-booking`): een
   boeking die het team zelf ingeeft (bv. na een telefoontje) — zelfde
-  tijdslot-/roomlogica als de klant-widget, maar geen Mollie-betaallink: je
-  kiest een betaalwijze (cash/overschrijving/andere) en de boeking wordt
-  meteen als betaald geregistreerd (`booked_via = 'backoffice'`). Wél de
-  Billit-factuur bij aanvraag, maar bewust GEEN bevestigingsmail — bij een
-  manuele boeking heeft het team de klant al rechtstreeks gesproken, dus
-  zowel de klantbevestiging als de interne meldingsmail zouden overbodig
-  zijn. Geboortedatum is hier optioneel (in tegenstelling tot de
-  klant-widget). Ook hier kan een cadeaubon-code ingevuld worden.
+  tijdslot-/roomlogica als de klant-widget, maar geen Mollie-betaallink: de
+  boeking wordt meteen als betaald geregistreerd (`booked_via =
+  'backoffice'`). Wél de Billit-factuur bij aanvraag, maar bewust GEEN
+  bevestigingsmail — bij een manuele boeking heeft het team de klant al
+  rechtstreeks gesproken, dus zowel de klantbevestiging als de interne
+  meldingsmail zouden overbodig zijn.
+
+  **Enkel de naam is verplicht.** Geboortedatum was hier al optioneel, en
+  sinds aug 2026 geldt dat ook voor het e-mailadres: aan de balie of aan de
+  telefoon heeft niet elke klant er een bij de hand. Zonder e-mail krijgt de
+  boeking gewoon een eigen klantrij (er valt niets te herkennen), en er
+  vertrekt geen bevestigingsmail — wat bij een manuele boeking sowieso al niet
+  gebeurde. Bewust wordt er NIET op naam samengevoegd: twee verschillende
+  "Jan Peeters" zouden zo op elkaars gegevens en boekingsgeschiedenis
+  terechtkomen. Zie `db/migrations/009_tijdsblok_en_optionele_email.sql`.
+
+  **Betaalwijze wordt niet meer gevraagd** (Robin, aug 2026) — noch bij het
+  toevoegen, noch bij het bevestigen van een reservering. De betaalregel in
+  `payments` krijgt gewoon `provider = 'manual'`. Ook hier kan een
+  cadeaubon-code ingevuld worden.
   - **"Enkel reserveren"** (checkbox in hetzelfde scherm, `reserveOnly`):
     voor een boeking die vaak nog wijzigt (groepsgrootte, annulatie, ...) en
     dus nog niet definitief is — er is en blijft **geen Mollie-koppeling**
@@ -98,7 +123,7 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
     online boeking met gedeeltelijke cadeaubon-dekking). Een gereserveerde
     boeking is herkenbaar in de weekagenda (gestreepte rand, "· reservering"
     label) en klikbaar — dat opent een klein venster om de boeking alsnog te
-    bevestigen (met de effectieve betaalwijze), waarna pas de Billit-factuur
+    bevestigen, waarna pas de Billit-factuur
     en de cadeaubon-afschrijving gebeuren (`lib/store-sql.js:
     confirmManualBooking()`, `/api/admin/confirm-booking`). Nog steeds
     bewust geen bevestigingsmail op dat moment.
@@ -203,8 +228,9 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
 - **Boeking annuleren en verplaatsen** (enkel Admin): geen zoekscherm meer —
   beide acties zitten in het detailscherm van een boeking, klik de boeking
   gewoon aan in de agenda. Niet in het "Meer acties"-menu (dat bevat enkel
-  nog Cadeaubonnen, Room(s) sluiten, Persoonlijke afspraak, Extra sessie en
-  E-maillijst exporteren). Bij "Boeking annuleren" kies je zelf hoeveel je
+  nog Cadeaubonnen, Room(s) sluiten, Tijdsblok toevoegen, Persoonlijke
+  afspraak, Extra sessie, Agenda exporteren (Excel/PDF) en E-maillijst
+  exporteren). Bij "Boeking annuleren" kies je zelf hoeveel je
   terugbetaalt — volledig, gedeeltelijk (bv. annuleringskost ingehouden) of
   niets (`bookings.refunded_amount`/`refund_reason`/`refunded_at`, zie
   `db/migrations/001_add_refund_tracking.sql`). Het bedrag dat je behoudt
@@ -221,9 +247,10 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   serverless functies werkt): "Boeking exporteren (PDF)" in het
   detailscherm van 1 boeking geeft alle gegevens (klant, tijdstip, room,
   bedrag, betaal-/terugbetalingsstatus) als downloadbare PDF, om extern te
-  bewaren. "Week exporteren (PDF)" in "Meer acties" geeft een overzicht van
-  alle boekingen in de zichtbare week in 1 PDF. Geen vervanging van de
-  Billit-verzamelfactuur, enkel een leesbaar exportbestand.
+  bewaren. In "Meer acties" staat daarnaast **Agenda exporteren (Excel)** —
+  de hele week als CSV met rijen en kolommen, één rij per room per tijdslot —
+  en **Agenda afdrukken (PDF)**. Geen vervanging van de
+  Billit-verzamelfactuur, enkel leesbare exportbestanden.
 - **BELANGRIJKE BUGFIX — dagen naast de ankerdatum kregen nooit sessies**
   (`lib/store-sql.js: ruleAppliesOn()`): alle Action Painting-weekdagregels
   delen dezelfde `anchor_date` (een woensdag) in `db/seed.sql`. De oude
@@ -713,8 +740,9 @@ De volgorde voor een bestaande live database:
 6. `006_update_schedule.sql`
 7. `007_session_exceptions.sql`
 8. `008_unique_session_slot.sql`
+9. `009_tijdsblok_en_optionele_email.sql`
 
-Alle vijf zijn idempotent: opnieuw draaien kan geen kwaad. 004 controleert zelf
+Alle negen zijn idempotent: opnieuw draaien kan geen kwaad. 004 controleert zelf
 of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
 `migration_test.js` (deel van `npm test`) bootst precies deze situatie na en
 controleert de hele keten.
@@ -925,9 +953,46 @@ blijven.
 Dit is bewust niet met een vaste waarde in de CSS opgelost. Verandert er iets aan
 de kop of aan de werkurenrij, dan corrigeert de meting zichzelf.
 
-## Agenda exporteren (PDF)
+## Agenda exporteren (Excel/CSV)
 
-"Meer acties" → **Agenda exporteren (PDF)** geeft de weekagenda als afdrukbaar
+"Meer acties" → **Agenda exporteren (Excel)** geeft de agenda als CSV met rijen
+en kolommen, opgebouwd zoals de Wix-boekingslijst waar dit systeem op volgt: de
+kolomnamen die daar ook in staan zijn letterlijk overgenomen ("Sessiedatum",
+"Start Tijd", "Servicenaam", "Boeking Contactnaam", "Boeking Contact E-mail",
+...), zodat een bestaande filter of draaitabel op beide bestanden werkt.
+
+**Eén rij per room per tijdslot**, niet enkel per boeking. Elk uur van Action
+Painting geeft dus vier rijen — M, VL, VR en A — met in de kolom `Status`
+ofwel `Geboekt`, `Vrij` of `Gesloten`. Filter in Excel op die kolom en je hebt
+ofwel je boekingenlijst, ofwel meteen wat er nog vrij is. Dat laatste is net wat
+je aan de telefoon nodig hebt.
+
+    /api/admin/agenda-export?week=2026-08-24          één week
+    /api/admin/agenda-export?week=2026-08-24&weken=4  vier weken in één bestand (max 26)
+    /api/admin/agenda-export?week=2026-08-24&alleen=geboekt   enkel de boekingen
+
+Waarom een eigen store-functie (`getAgendaExportRows`) en niet `getWeekSessions`:
+die laatste voedt de week-grid op het scherm en geeft bewust géén e-mail,
+telefoon of geboortedatum terug (minder persoonsgegevens door de browser). Een
+export van acht weken zou er bovendien acht keer op moeten draaien; de
+exportfunctie doet het hele bereik in twee queries, hoeveel weken je ook vraagt.
+
+De opbouw van de rijen zelf staat in `lib/agendaExport.js`, los van de API-route,
+zodat `reservation_test.js` de échte rijen kan nakijken — kolomaantal, één rij
+per room, formule-neutralisatie, en het bestand terug inlezen met dezelfde
+CSV-parser als de Wix-import. Reden: de PDF-variant hieronder zag er in de code
+correct uit en gaf tóch elke room als "vrij" terug; dat kwam pas aan het licht
+toen er een echt bestand gemaakt werd. Met `node scripts/voorbeeld-export.js
+uit.csv` maak je zo'n voorbeeldbestand op een verse database.
+
+Geboortedatum staat enkel ingevuld bij klanten waar we die hebben (de
+Wix-import haalt hem uit de formuliervraag "Geboortedatum"); bij een manuele
+boeking vragen we die niet. Enkel Admin — het bestand bevat klantnamen,
+e-mailadressen en bedragen.
+
+## Agenda afdrukken (PDF)
+
+"Meer acties" → **Agenda afdrukken (PDF)** geeft de weekagenda als afdrukbaar
 blad: per dag de werkuren van het team, dan elk tijdslot met alle vier de rooms
 eronder — geboekt (met naam, aantal personen, bedrag, betaalstatus en de
 notitie), vrij, of gesloten met de reden. Onderaan elke dag een dagtotaal, en
@@ -1129,6 +1194,7 @@ db/
   migrations/006_update_schedule.sql        uurrooster Action Painting bijwerken (vrijdag, donderdag vanaf 01/09)
   migrations/007_session_exceptions.sql     losse uitzonderingen: vr 02/10/2026 16:30 wordt 17:30
   migrations/008_unique_session_slot.sql    unieke index (service_id, start_datetime): geen dubbele tijdsloten meer
+  migrations/009_tijdsblok_en_optionele_email.sql  sessietype 'block' + customers.email mag leeg blijven
   check-schema-state.sql   leesbare diagnose: welke migraties zijn nog niet gedraaid?
   check-sessions.sql       leesbare diagnose: alle toekomstige sessies + waar staan er dubbels?
   reset-sessions.sql       WIST alle sessies, boekingen en betalingen (cadeaubonnen en klanten blijven)

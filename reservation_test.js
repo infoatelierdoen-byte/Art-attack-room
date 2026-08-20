@@ -385,6 +385,201 @@ async function main() {
     log("Weekagenda geeft refundedAmount mee", refEv && refEv.refundedAmount === 120, refEv && refEv.refundedAmount);
     log("Weekagenda geeft partySize mee voor het personen-badge", refEv && refEv.partySize === 2, refEv && refEv.partySize);
 
+    // ================================================================
+    // Boeking zonder e-mailadres (aug 2026)
+    // ================================================================
+    // Aan de balie of aan de telefoon heeft niet elke klant een e-mailadres.
+    // Enkel de naam is nog verplicht.
+    const { toISODate: naarISO } = require(path.join(PROJECT, "lib/dateUtils.js"));
+    let geenMailSlot = null;
+    for (let i = 1; i <= 40 && !geenMailSlot; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO(d);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const free = av.find(sl => sl.bookable);
+      if (free) geenMailSlot = { iso, start: free.start };
+    }
+    const { booking: zonderMail } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: geenMailSlot.iso, start: geenMailSlot.start,
+      partySize: 2, customer: { name: "Klant Zonder Mail" }, note: ""
+    });
+    log("Boeking zonder e-mailadres slaagt", !!zonderMail.id);
+    const { rows: klantZM } = await pool.query(
+      "SELECT c.* FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.id = $1", [zonderMail.id]);
+    log("Klant is opgeslagen met een lege e-mail (NULL, geen lege tekst)",
+        klantZM[0] && klantZM[0].email === null, JSON.stringify(klantZM[0] && klantZM[0].email));
+    log("De naam is wél bewaard", klantZM[0] && klantZM[0].full_name === "Klant Zonder Mail");
+
+    // Een tweede naamloze-mail-boeking mag NIET op dezelfde klantrij belanden:
+    // zonder e-mail valt er niets te herkennen.
+    const { booking: zonderMail2 } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: geenMailSlot.iso, start: geenMailSlot.start,
+      partySize: 2, customer: { name: "Andere Klant Zonder Mail" }, note: ""
+    });
+    const { rows: klantZM2 } = await pool.query(
+      "SELECT customer_id FROM bookings WHERE id = ANY($1::uuid[])", [[zonderMail.id, zonderMail2.id]]);
+    log("Twee boekingen zonder e-mail krijgen elk een eigen klantrij",
+        klantZM2.length === 2 && klantZM2[0].customer_id !== klantZM2[1].customer_id);
+
+    // Een lege string telt als "geen e-mail", niet als een adres "".
+    const { booking: legeMail } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: geenMailSlot.iso, start: geenMailSlot.start,
+      partySize: 2, customer: { name: "Lege Mail", email: "   " }, note: ""
+    });
+    const { rows: klantLM } = await pool.query(
+      "SELECT c.email FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.id = $1", [legeMail.id]);
+    log("Een lege e-mail wordt NULL, geen lege tekst", klantLM[0] && klantLM[0].email === null);
+
+    // Mét e-mail blijft het oude gedrag: dezelfde klant wordt herkend.
+    const { rows: bestaandeKlant } = await pool.query(
+      "SELECT COUNT(*)::int c FROM customers WHERE email = $1", ["refund@test.be"]);
+    log("Klanten mét e-mail blijven samengevoegd op adres", bestaandeKlant[0].c === 1);
+
+    // Zonder naam blijft het wél een fout.
+    let naamloosGeweigerd = false;
+    try {
+      await store.createManualBooking({
+        serviceCode: "action_painting", dateISO: geenMailSlot.iso, start: geenMailSlot.start,
+        partySize: 2, customer: { email: "iemand@test.be" }, note: ""
+      });
+    } catch (err) { naamloosGeweigerd = /naam/i.test(err.message); }
+    log("Een boeking zonder naam wordt nog steeds geweigerd", naamloosGeweigerd);
+
+    // ================================================================
+    // Tijdsblok in de agenda (aug 2026)
+    // ================================================================
+    const blokDag = geenMailSlot.iso;
+    const blok = await store.addTimeBlock({ title: "Kamp voorbereiden", dateISO: blokDag, start: "09:00", end: "11:00" });
+    log("Tijdsblok aangemaakt", !!blok.id && blok.kind === "block");
+
+    const blokWeek = await store.getWeekSessions(mondayOfISO(blokDag));
+    const blokEv = blokWeek.find(e => e.kind === "block" && e.dateISO === blokDag);
+    log("Tijdsblok verschijnt in de weekagenda", !!blokEv);
+    log("Tijdsblok toont zijn titel (niet geredigeerd zoals een privé-afspraak)",
+        blokEv && blokEv.title === "Kamp voorbereiden", blokEv && blokEv.title);
+    log("Tijdsblok geeft start én einde mee", blokEv && blokEv.start === "09:00" && blokEv.end === "11:00",
+        blokEv && `${blokEv.start}–${blokEv.end}`);
+    log("Tijdsblok geeft zijn sessie-id mee (nodig om het te verwijderen)", !!(blokEv && blokEv.sessionId));
+    log("Tijdsblok is zichtbaar, niet privé", blokEv && blokEv.visibility === "standard", blokEv && blokEv.visibility);
+
+    // Bewuste keuze: een tijdsblok blokkeert NIETS. Een blok over een sessie
+    // heen mag de boekbaarheid van die sessie niet veranderen.
+    // Uitdrukkelijk een slot kiezen dat NU boekbaar is — anders bewijst deze
+    // test niets (een al volzet slot blijft ook zonder blok onboekbaar).
+    let vrijDag = null, vrijSlot = null;
+    for (let i = 1; i <= 40 && !vrijSlot; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO(d);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const free = av.find(sl => sl.bookable);
+      if (free) { vrijDag = iso; vrijSlot = free.start; }
+    }
+    await store.addTimeBlock({ title: "Overlappend blok", dateISO: vrijDag, start: vrijSlot, end: "23:30" });
+    const naBlok = await store.getAvailability("action_painting", vrijDag, 2);
+    const zelfdeSlot = naBlok.find(sl => sl.start === vrijSlot);
+    log("Een tijdsblok blokkeert géén online boekingen (bewuste keuze)",
+        !!(zelfdeSlot && zelfdeSlot.bookable),
+        `slot ${vrijDag} ${vrijSlot}, boekbaar na het blok = ${zelfdeSlot && zelfdeSlot.bookable}`);
+    log("Een tijdsblok neemt geen room in", (await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings rb JOIN sessions s ON s.id = rb.session_id WHERE s.kind = 'block'"
+    )).rows[0].c === 0);
+
+    // Aanpassen en verwijderen.
+    await store.updateTimeBlock(blok.id, { title: "Kamp klaarzetten", dateISO: blokDag, start: "09:30", end: "11:30" });
+    const naWijziging = (await store.getWeekSessions(mondayOfISO(blokDag)))
+      .find(e => e.kind === "block" && e.sessionId === blok.id);
+    log("Tijdsblok aanpassen werkt", naWijziging && naWijziging.title === "Kamp klaarzetten" && naWijziging.start === "09:30",
+        naWijziging && `${naWijziging.title} ${naWijziging.start}`);
+
+    let omgekeerdGeweigerd = false;
+    try { await store.updateTimeBlock(blok.id, { title: "Fout", dateISO: blokDag, start: "12:00", end: "10:00" }); }
+    catch (err) { omgekeerdGeweigerd = /einduur/i.test(err.message); }
+    log("Een einduur vóór het startuur wordt geweigerd", omgekeerdGeweigerd);
+
+    // Een workshopsessie mag NOOIT via deze weg verdwijnen.
+    const { rows: echteSessie } = await pool.query("SELECT id FROM sessions WHERE kind = 'service' LIMIT 1");
+    let sessieBeschermd = false;
+    try { await store.deleteTimeBlock(echteSessie[0].id); }
+    catch (err) { sessieBeschermd = /niet gevonden/i.test(err.message); }
+    log("deleteTimeBlock raakt een gewone sessie niet aan", sessieBeschermd);
+    const { rows: nogSteeds } = await pool.query("SELECT COUNT(*)::int c FROM sessions WHERE id = $1", [echteSessie[0].id]);
+    log("Die sessie staat er nog", nogSteeds[0].c === 1);
+
+    await store.deleteTimeBlock(blok.id);
+    const naVerwijderen = (await store.getWeekSessions(mondayOfISO(blokDag)))
+      .find(e => e.kind === "block" && e.sessionId === blok.id);
+    log("Tijdsblok verwijderen werkt", !naVerwijderen);
+
+    // ================================================================
+    // Agenda-export als CSV — rijen en kolommen (aug 2026)
+    // ================================================================
+    // De PDF-variant leek in de code correct en gaf tóch elke room als "vrij"
+    // terug (room.code bestaat niet, het is room.id). Daarom hier niet enkel
+    // de query testen maar de échte CSV-rijen, zoals ze in Excel belanden.
+    const { addDaysISO } = require(path.join(PROJECT, "lib/dateUtils.js"));
+    const expMaandag = mondayOfISO(refSlot.iso);
+    const expZondag = addDaysISO(expMaandag, 6);
+    const expData = await store.getAgendaExportRows(expMaandag, expZondag);
+    const expRooms = await store.getRoomsList();
+    const { bouwRijen, bouwCsv, csvVeld, KOLOMMEN } = require(path.join(PROJECT, "lib/agendaExport.js"));
+
+    const expBoeking = expData.sessies.find(s => s.bookingId === refB.id);
+    log("Export geeft klant-e-mail mee (getWeekSessions doet dat niet)",
+        expBoeking && expBoeking.customerEmail === "refund@test.be", expBoeking && expBoeking.customerEmail);
+    log("Export geeft telefoon mee", expBoeking && expBoeking.customerPhone === "0470000020", expBoeking && expBoeking.customerPhone);
+    log("Export geeft een einduur mee", !!(expBoeking && /^\d{2}:\d{2}$/.test(expBoeking.end)), expBoeking && expBoeking.end);
+    log("Export geeft de room-code mee", !!(expBoeking && expBoeking.roomCode), expBoeking && expBoeking.roomCode);
+
+    const expRijen = bouwRijen({ ...expData, rooms: expRooms, alleenGeboekt: false });
+    log("Elke rij heeft evenveel kolommen als de kop",
+        expRijen.every(r => r.length === KOLOMMEN.length),
+        `kop=${KOLOMMEN.length}, min=${Math.min(...expRijen.map(r => r.length))}, max=${Math.max(...expRijen.map(r => r.length))}`);
+
+    const statusKol = KOLOMMEN.indexOf("Status");
+    const roomKol = KOLOMMEN.indexOf("Room");
+    const naamKol = KOLOMMEN.indexOf("Boeking Contactnaam");
+    const geboekteRijen = expRijen.filter(r => r[statusKol] === "Geboekt");
+    log("De testboeking staat als 'Geboekt' in de export",
+        geboekteRijen.some(r => r[naamKol] === "Terugbetaal Klant"));
+    log("Een geboekte rij heeft een room ingevuld (niet allemaal 'vrij', zoals de PDF-bug)",
+        geboekteRijen.filter(r => r[naamKol]).every(r => !!r[roomKol]));
+    log("Er staan óók vrije rooms in de export",
+        expRijen.some(r => r[statusKol] === "Vrij"));
+
+    // Action Painting heeft vier rooms: elk tijdslot moet vier rijen geven.
+    const apSlot = expData.sessies.find(s => s.usesRoomAssignment && s.dateISO === refSlot.iso && s.start === refSlot.start);
+    const apRijen = expRijen.filter(r => r[0] === `${refSlot.iso.slice(8,10)}/${refSlot.iso.slice(5,7)}/${refSlot.iso.slice(0,4)}` && r[2] === refSlot.start);
+    log("Eén rij per room per tijdslot (4 rooms = 4 rijen)",
+        !apSlot || apRijen.length === expRooms.length, `${apRijen.length} rijen, ${expRooms.length} rooms`);
+
+    // alleen=geboekt laat de vrije rijen weg maar behoudt de boekingen.
+    const enkelGeboekt = bouwRijen({ ...expData, rooms: expRooms, alleenGeboekt: true });
+    log("alleen=geboekt laat de vrije rijen weg",
+        enkelGeboekt.every(r => r[statusKol] === "Geboekt") && enkelGeboekt.length === geboekteRijen.length,
+        `${enkelGeboekt.length} van ${expRijen.length}`);
+
+    // Formule-injectie: een klantnaam uit het publieke formulier mag in Excel
+    // nooit als formule uitgevoerd worden.
+    // Let op: dit veld bevat óók aanhalingstekens, dus het resultaat is
+    // gequote — de apostrof staat dan binnen de quotes: "'=HYPERLINK(...)".
+    // Excel ziet de cel daardoor als tekst en voert niets uit.
+    log("CSV-veld neutraliseert een formule", csvVeld('=HYPERLINK("http://kwaad")').startsWith(`"'=`),
+        csvVeld('=HYPERLINK("http://kwaad")'));
+    log("CSV-veld neutraliseert een formule zonder quotes", csvVeld("=1+1") === "'=1+1", csvVeld("=1+1"));
+    log("CSV-veld quoot een puntkomma (Excel-NL splitst daarop)", csvVeld("a;b") === '"a;b"', csvVeld("a;b"));
+    log("CSV-veld verdubbelt aanhalingstekens", csvVeld('zeg "hallo"') === '"zeg ""hallo"""', csvVeld('zeg "hallo"'));
+
+    // En tenslotte: de samengestelde CSV terug inlezen met dezelfde parser als
+    // de Wix-import, zodat we zeker weten dat Excel hetzelfde rooster ziet.
+    const { parse } = require("csv-parse/sync");
+    const heringelezen = parse(bouwCsv(expRijen), { columns: true, skip_empty_lines: true });
+    log("CSV leest terug in met evenveel rijen", heringelezen.length === expRijen.length,
+        `${heringelezen.length} vs ${expRijen.length}`);
+    log("CSV leest terug in met alle kolomkoppen",
+        Object.keys(heringelezen[0] || {}).join("|") === KOLOMMEN.join("|"));
+    log("Klantnaam staat in de juiste kolom na herinlezen",
+        heringelezen.some(r => r["Boeking Contactnaam"] === "Terugbetaal Klant" && r["Status"] === "Geboekt"));
+
     // Bij het afsluiten sluit embedded-postgres de server terwijl `pg` soms nog
     // een inactieve verbinding openhoudt. Die gooit dan een niet-afgevangen
     // 'error'-event ('terminating connection due to administrator command'),

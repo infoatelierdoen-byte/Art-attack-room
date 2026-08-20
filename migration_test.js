@@ -281,6 +281,116 @@ function log(name, ok, extra="") { if(!ok) fails++; console.log(`${ok?"PASS":"FA
   echtePool.query = origQuery;
 
   // ================================================================
+  // Migratie 009: tijdsblok + optionele e-mail
+  // ================================================================
+  // De testdatabase is uit de NIEUWE schema.sql gebouwd, waar beide zaken al
+  // in staan. Deze migratie moet daar dus zonder klagen overheen kunnen —
+  // precies wat er op Neon gebeurt als hij per ongeluk twee keer draait.
+  //
+  // Het echte risico zit in ALTER TYPE ... ADD VALUE: die mag in PostgreSQL
+  // niet in dezelfde transactie gebruikt worden als waarin hij is toegevoegd.
+  // pool.query() met een heel bestand stuurt alles als één impliciete
+  // transactie, en dat is strenger dan wat psql doet. Draait het hier, dan
+  // draait het bij Robin zeker.
+  let ok9 = true;
+  try { await p.query(fs.readFileSync(path.join(P,"db/migrations/009_tijdsblok_en_optionele_email.sql"),"utf8")); }
+  catch(e){ ok9=false; console.log("   "+e.message); }
+  log("009 draait zonder fout", ok9);
+
+  let ok9b = true;
+  try { await p.query(fs.readFileSync(path.join(P,"db/migrations/009_tijdsblok_en_optionele_email.sql"),"utf8")); }
+  catch(e){ ok9b=false; console.log("   "+e.message); }
+  log("009 is idempotent", ok9b);
+
+  const {rows: enumRij} = await p.query(
+    `SELECT COUNT(*)::int c FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+      WHERE t.typname = 'session_kind' AND e.enumlabel = 'block'`);
+  log("009 voegt het sessietype 'block' toe", enumRij[0].c === 1);
+
+  const {rows: emailKol} = await p.query(
+    `SELECT is_nullable FROM information_schema.columns
+      WHERE table_name = 'customers' AND column_name = 'email'`);
+  log("009 maakt customers.email optioneel", emailKol[0].is_nullable === "YES", emailKol[0].is_nullable);
+
+  // Twee klanten zonder e-mail moeten naast elkaar kunnen bestaan — dat is de
+  // reden dat de UNIQUE-index mag blijven staan.
+  await p.query("INSERT INTO customers (full_name) VALUES ('Zonder Mail 1'), ('Zonder Mail 2')");
+  const {rows: zonderMail} = await p.query("SELECT COUNT(*)::int c FROM customers WHERE email IS NULL");
+  log("Meerdere klanten zonder e-mail kunnen naast elkaar bestaan", zonderMail[0].c >= 2, `${zonderMail[0].c} klanten`);
+
+  // Maar twee klanten mét hetzelfde adres nog steeds niet.
+  let dubbelMailGeweigerd = false;
+  try {
+    await p.query("INSERT INTO customers (full_name, email) VALUES ('A','dubbel@test.be'), ('B','dubbel@test.be')");
+  } catch(e){ dubbelMailGeweigerd = /duplicate key|unique/i.test(e.message); }
+  log("Twee klanten met hetzelfde e-mailadres blijven geweigerd", dubbelMailGeweigerd);
+
+  // Een tijdsblok moet nu in de sessies-tabel passen, een 'block' MÉT dienst niet.
+  const {rows: blokRij} = await p.query(
+    `INSERT INTO sessions (kind, title, start_datetime, end_datetime)
+     VALUES ('block','Testblok', now(), now() + interval '1 hour') RETURNING id`);
+  log("Een tijdsblok kan opgeslagen worden", !!blokRij[0].id);
+  let blokMetDienstGeweigerd = false;
+  try {
+    const {rows: eenDienst} = await p.query("SELECT id FROM services LIMIT 1");
+    await p.query(
+      `INSERT INTO sessions (kind, service_id, title, start_datetime, end_datetime)
+       VALUES ('block',$1,'Fout', now(), now() + interval '1 hour')`, [eenDienst[0].id]);
+  } catch(e){ blokMetDienstGeweigerd = /chk_session_kind_service|check constraint/i.test(e.message); }
+  log("Een tijdsblok gekoppeld aan een dienst wordt geweigerd", blokMetDienstGeweigerd);
+  await p.query("DELETE FROM sessions WHERE id = $1", [blokRij[0].id]);
+
+  // --- 009 op een ECHT oude database ---------------------------------
+  // Hierboven draaide 009 op een database die 'block' al kende, dus het
+  // spannende stuk (ALTER TYPE ... ADD VALUE) werd overgeslagen. Daarom een
+  // aparte database die eruitziet zoals die van Robin vóór deze migratie:
+  // een session_kind zonder 'block', een verplichte e-mail, en de oude CHECK.
+  //
+  // Het hele bestand gaat in één pool.query() — dus als één impliciete
+  // transactie. PostgreSQL weigert een nieuw toegevoegde enum-waarde in
+  // dezelfde transactie te gebruiken; daarom staat de CHECK in de migratie op
+  // kind::text en niet op kind. Deze test is precies wat dat bewaakt.
+  await pg.createDatabase("oud");
+  const oud = new Pool({ connectionString: "postgresql://postgres:x@localhost:54399/oud" });
+  await oud.query(`
+    CREATE TYPE session_kind AS ENUM ('service', 'personal');
+    CREATE TYPE session_status AS ENUM ('scheduled','cancelled');
+    CREATE TYPE session_visibility AS ENUM ('standard','private');
+    CREATE TABLE services (id SERIAL PRIMARY KEY, name TEXT);
+    CREATE TABLE customers (
+      id SERIAL PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE);
+    CREATE TABLE sessions (
+      id SERIAL PRIMARY KEY,
+      kind session_kind NOT NULL DEFAULT 'service',
+      service_id INT REFERENCES services(id),
+      title TEXT,
+      start_datetime TIMESTAMPTZ NOT NULL,
+      end_datetime TIMESTAMPTZ NOT NULL,
+      status session_status NOT NULL DEFAULT 'scheduled',
+      visibility session_visibility NOT NULL DEFAULT 'standard',
+      CONSTRAINT chk_session_kind_service CHECK (
+        (kind = 'service' AND service_id IS NOT NULL) OR
+        (kind = 'personal' AND service_id IS NULL)));
+  `);
+  let oudOk = true;
+  try { await oud.query(fs.readFileSync(path.join(P,"db/migrations/009_tijdsblok_en_optionele_email.sql"),"utf8")); }
+  catch(e){ oudOk=false; console.log("   "+e.message); }
+  log("009 draait op een database die 'block' nog niet kent", oudOk);
+
+  if (oudOk) {
+    // En daarna moet de nieuwe waarde ook echt bruikbaar zijn.
+    const {rows: nieuwBlok} = await oud.query(
+      `INSERT INTO sessions (kind, title, start_datetime, end_datetime)
+       VALUES ('block','Na de migratie', now(), now() + interval '1 hour') RETURNING id`);
+    log("Na 009 kan er een tijdsblok bijgemaakt worden", !!nieuwBlok[0].id);
+    const {rows: naMigratie} = await oud.query(
+      "INSERT INTO customers (full_name) VALUES ('Zonder Mail') RETURNING id");
+    log("Na 009 kan er een klant zonder e-mail bijkomen", !!naMigratie[0].id);
+  }
+  oud.on("error", () => {});
+  await oud.end();
+
+  // ================================================================
   // reset-sessions.sql — draait hij, en blijft het juiste staan?
   // ================================================================
   const {rows: voorReset} = await p.query(`

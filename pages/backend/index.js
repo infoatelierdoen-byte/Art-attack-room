@@ -57,7 +57,11 @@ function timeToMinutes(hhmm) {
 function layoutDayEvents(dayEvents) {
   const items = dayEvents.map(ev => {
     const startMin = timeToMinutes(ev.start);
-    const endMin = ev.kind === "personal" ? timeToMinutes(ev.end) : startMin + (ev.durationMin || 90);
+    // Een persoonlijke afspraak en een tijdsblok hebben een echt einduur;
+    // een workshopsessie heeft een vaste duur.
+    const endMin = ev.kind === "personal" || ev.kind === "block"
+      ? timeToMinutes(ev.end)
+      : startMin + (ev.durationMin || 90);
     return { ev, startMin, endMin, col: 0, cols: 1 };
   }).sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
 
@@ -162,10 +166,13 @@ function serviceLabel(code) {
   return code;
 }
 
+// Een leeg tijdsblok-formulier. `id` gevuld = een bestaand blok aanpassen.
+const EMPTY_BLOCK_FORM = { id: null, title: "", dateISO: "", start: "", end: "" };
+
 const EMPTY_MANUAL_FORM = {
   serviceCode: "", dateISO: "", start: "", partySize: 2,
   name: "", email: "", phone: "", birthDate: "", note: "",
-  paymentMethod: "cash", invoiceRequested: false, vatNumber: "", companyName: "",
+  invoiceRequested: false, vatNumber: "", companyName: "",
   giftCardCode: "", reserveOnly: false
 };
 
@@ -226,6 +233,11 @@ export default function Backend() {
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
 
+  const [showTimeBlock, setShowTimeBlock] = useState(false);
+  const [blockForm, setBlockForm] = useState(EMPTY_BLOCK_FORM);
+  const [blockError, setBlockError] = useState("");
+  const [blockSubmitting, setBlockSubmitting] = useState(false);
+
   const [services, setServices] = useState([]);
   const [rooms, setRooms] = useState([]);
 
@@ -259,7 +271,6 @@ export default function Backend() {
   const [giftCardSubmitting, setGiftCardSubmitting] = useState(false);
 
   const [confirmTarget, setConfirmTarget] = useState(null); // ev met bookingId, of null
-  const [confirmPaymentMethod, setConfirmPaymentMethod] = useState("cash");
   const [confirmError, setConfirmError] = useState("");
   const [confirmSubmitting, setConfirmSubmitting] = useState(false);
 
@@ -414,6 +425,68 @@ export default function Backend() {
     load(monday);
   }
 
+  // --- Tijdsblok ---
+  // Een eigen blok in de agenda om zelf iets in te plannen. Het neemt geen
+  // rooms in en blokkeert geen online boekingen (bewuste keuze, Robin aug
+  // 2026) — daarvoor is er "Room(s) sluiten".
+
+  function openTimeBlock(dateISO) {
+    setBlockForm({ id: null, title: "", dateISO: dateISO || "", start: "", end: "" });
+    setBlockError("");
+    setShowTimeBlock(true);
+  }
+
+  function openEditTimeBlock(ev) {
+    setBlockForm({
+      id: ev.sessionId, title: ev.title || "",
+      dateISO: ev.dateISO, start: ev.start, end: ev.end
+    });
+    setBlockError("");
+    setShowTimeBlock(true);
+  }
+
+  async function submitTimeBlock(e) {
+    e.preventDefault();
+    if (blockForm.end <= blockForm.start) {
+      setBlockError("Het einduur moet na het startuur liggen.");
+      return;
+    }
+    setBlockSubmitting(true);
+    setBlockError("");
+    try {
+      const res = await fetch("/api/admin/time-block", {
+        method: blockForm.id ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(blockForm)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBlockError(data.error || "Er ging iets mis.");
+        return;
+      }
+      setShowTimeBlock(false);
+      setBlockForm(EMPTY_BLOCK_FORM);
+      load(monday);
+    } finally {
+      setBlockSubmitting(false);
+    }
+  }
+
+  async function verwijderTijdsblok(id) {
+    setCtxMenu(null);
+    const res = await fetch("/api/admin/time-block", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Het tijdsblok kon niet verwijderd worden.");
+      return;
+    }
+    load(monday);
+  }
+
   // --- Manuele boeking ---
 
   function openAddBooking() {
@@ -465,11 +538,12 @@ export default function Backend() {
           start: manualForm.start,
           partySize: Number(manualForm.partySize),
           customer: {
-            name: manualForm.name, email: manualForm.email,
+            name: manualForm.name, email: manualForm.email.trim() || null,
             phone: manualForm.phone, birthDate: manualForm.birthDate || null
           },
           note: manualForm.note,
-          paymentMethod: manualForm.paymentMethod,
+          // Betaalwijze wordt niet meer gevraagd (Robin, aug 2026): de
+          // betaalregel krijgt gewoon 'manual' mee. Zie lib/store-sql.js.
           invoiceRequested: manualForm.invoiceRequested,
           invoiceDetails: manualForm.invoiceRequested
             ? { vatNumber: manualForm.vatNumber, companyName: manualForm.companyName }
@@ -647,7 +721,6 @@ export default function Backend() {
 
   function openConfirmBooking(ev) {
     setConfirmTarget(ev);
-    setConfirmPaymentMethod("cash");
     setConfirmError("");
   }
 
@@ -659,7 +732,9 @@ export default function Backend() {
       const res = await fetch("/api/admin/confirm-booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingId: confirmTarget.bookingId, paymentMethod: confirmPaymentMethod })
+        // Geen betaalwijze meer (Robin, aug 2026) — de betaalregel blijft
+        // op 'manual' staan.
+        body: JSON.stringify({ bookingId: confirmTarget.bookingId })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
@@ -1079,6 +1154,16 @@ export default function Backend() {
     // de gast-rol de echte titel/klant/notitie/bedrag van privé-items al
     // niet mee, dus hier is enkel nog een weergavekeuze nodig, geen echte
     // toegangscontrole meer.
+    if (ev.kind === "block") {
+      // Eigen tijdsblok — paars, met de titel. Neemt geen room in en
+      // blokkeert niets; het staat er om het team te tonen dat de zaal op dat
+      // moment ergens anders voor gebruikt wordt.
+      return {
+        cls: "tijdsblok",
+        label: ev.title || "Tijdsblok",
+        sub: `${ev.start}–${ev.end}`
+      };
+    }
     if (ev.kind === "personal") {
       return {
         cls: "personal",
@@ -1206,6 +1291,7 @@ export default function Backend() {
                   <div className="actions-menu">
                     <button type="button" onClick={() => { openGiftCards(); setShowActionsMenu(false); }}>Cadeaubonnen</button>
                     <button type="button" onClick={() => { openCloseRoom(); setShowActionsMenu(false); }}>Room(s) sluiten</button>
+                    <button type="button" onClick={() => { openTimeBlock(""); setShowActionsMenu(false); }}>Tijdsblok toevoegen</button>
                     <button type="button" onClick={() => { setShowAddPersonal(true); setShowActionsMenu(false); }}>Persoonlijke afspraak</button>
                     <button type="button" onClick={() => { openAddExtra(); setShowActionsMenu(false); }}>Extra sessie</button>
                     {authRole === "admin" && (
@@ -1213,11 +1299,18 @@ export default function Backend() {
                         <div className="actions-menu-divider" />
                         <button type="button" onClick={openImport}>Boekingen importeren (CSV)</button>
                         <a
+                          href={`/api/admin/agenda-export?week=${monday}`}
+                          title="Excel-bestand met rijen en kolommen, opgebouwd zoals de Wix-boekingslijst: één rij per room per tijdslot, met een kolom Status (Geboekt / Vrij / Gesloten) om op te filteren"
+                          onClick={() => setShowActionsMenu(false)}
+                        >
+                          Agenda exporteren (Excel)
+                        </a>
+                        <a
                           href={`/api/admin/agenda-export-pdf?week=${monday}`}
                           title="Afdrukbare agenda van deze week: per dag de werkuren en per tijdslot alle rooms — geboekt, vrij of gesloten"
                           onClick={() => setShowActionsMenu(false)}
                         >
-                          Agenda exporteren (PDF)
+                          Agenda afdrukken (PDF)
                         </a>
                         <a
                           href="/api/admin/customers-export"
@@ -1351,15 +1444,21 @@ export default function Backend() {
                           return (
                             <div
                               key={idx}
-                              className={`cal-event ${v.cls}${ev.pendingConfirmation || ev.bookingId ? " clickable" : ""}`}
+                              className={`cal-event ${v.cls}${ev.pendingConfirmation || ev.bookingId || ev.kind === "block" ? " clickable" : ""}`}
                               style={{
                                 top,
                                 height,
                                 left: `calc(${(col / cols) * 100}% + 3px)`,
                                 width: `calc(${100 / cols}% - 6px)`
                               }}
-                              onClick={() => handleEventClick(ev)}
-                              title={ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (ev.bookingId ? "Klik voor details / annuleren" : undefined)}
+                              onClick={() => (ev.kind === "block" ? openEditTimeBlock(ev) : handleEventClick(ev))}
+                              onContextMenu={ev.kind === "block" ? e => openCtxMenu(e, { soort: "tijdsblok", ev }) : undefined}
+                              {...(ev.kind === "block" ? langIndrukken({ soort: "tijdsblok", ev }) : {})}
+                              title={
+                                ev.kind === "block"
+                                  ? `${ev.title || "Tijdsblok"} — klik om aan te passen, rechterklik om te verwijderen`
+                                  : ev.pendingConfirmation ? "Klik om deze reservering te bevestigen" : (ev.bookingId ? "Klik voor details / annuleren" : undefined)
+                              }
                             >
                               <div className="cal-event-label">{v.label}</div>
                               {v.count && <span className="cal-event-count">{v.count}</span>}
@@ -1376,6 +1475,40 @@ export default function Backend() {
           )}
         </main>
       </div>
+
+      {showTimeBlock && (
+        <div className="modal-backdrop" onClick={() => setShowTimeBlock(false)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitTimeBlock}>
+            <h3>{blockForm.id ? "Tijdsblok aanpassen" : "Tijdsblok toevoegen"}</h3>
+            <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
+              Een eigen blok in de agenda om zelf iets in te plannen (bv. "Kamp voorbereiden").
+              Het staat in het paars en neemt geen room in: klanten kunnen die uren nog gewoon
+              boeken. Wil je dat niet, gebruik dan "Room(s) sluiten".
+            </p>
+            <input required placeholder='Titel (bv. "Zaal klaarzetten")' value={blockForm.title}
+              onChange={e => setBlockForm({ ...blockForm, title: e.target.value })} />
+            <label className="field-label">Datum</label>
+            <input required type="date" value={blockForm.dateISO}
+              onChange={e => setBlockForm({ ...blockForm, dateISO: e.target.value })} />
+            <label className="field-label">Van / tot</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input required type="time" value={blockForm.start}
+                onChange={e => setBlockForm({ ...blockForm, start: e.target.value })} />
+              <input required type="time" value={blockForm.end}
+                onChange={e => setBlockForm({ ...blockForm, end: e.target.value })} />
+            </div>
+
+            {blockError && <p className="error-text">{blockError}</p>}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button type="button" onClick={() => setShowTimeBlock(false)}>Annuleren</button>
+              <button type="submit" className="add-btn" disabled={blockSubmitting}>
+                {blockSubmitting ? "Bezig…" : blockForm.id ? "Opslaan" : "Toevoegen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showAddPersonal && (
         <div className="modal-backdrop" onClick={() => setShowAddPersonal(false)}>
@@ -1450,7 +1583,11 @@ export default function Backend() {
 
             <input required placeholder="Naam klant" value={manualForm.name}
               onChange={e => setManualForm({ ...manualForm, name: e.target.value })} />
-            <input required type="email" placeholder="E-mail" value={manualForm.email}
+            {/* E-mail is niet verplicht (Robin, aug 2026): aan de balie of aan
+                de telefoon heeft niet elke klant er een bij de hand. Zonder
+                e-mail vertrekt er geen bevestigingsmail — bij een manuele
+                boeking gebeurt dat sowieso al niet. */}
+            <input type="email" placeholder="E-mail (optioneel)" value={manualForm.email}
               onChange={e => setManualForm({ ...manualForm, email: e.target.value })} />
             <input placeholder="Telefoon (optioneel)" value={manualForm.phone}
               onChange={e => setManualForm({ ...manualForm, phone: e.target.value })} />
@@ -1470,15 +1607,6 @@ export default function Backend() {
                 onChange={e => setManualForm({ ...manualForm, reserveOnly: e.target.checked })} />
               Enkel reserveren (nog niet bevestigd/betaald)
             </label>
-
-            <label className="field-label">
-              {manualForm.reserveOnly ? "Verwachte betaalwijze (later te bevestigen)" : "Betaalwijze"}
-            </label>
-            <select value={manualForm.paymentMethod} onChange={e => setManualForm({ ...manualForm, paymentMethod: e.target.value })}>
-              <option value="cash">Cash</option>
-              <option value="bank_transfer">Overschrijving</option>
-              <option value="other">Andere</option>
-            </select>
 
             <label className="checkbox-row">
               <input type="checkbox" checked={manualForm.invoiceRequested}
@@ -1707,13 +1835,6 @@ export default function Backend() {
               afschrijving alsnog in orde, indien van toepassing) — nog steeds zonder bevestigingsmail.
             </p>
 
-            <label className="field-label">Betaalwijze</label>
-            <select value={confirmPaymentMethod} onChange={e => setConfirmPaymentMethod(e.target.value)}>
-              <option value="cash">Cash</option>
-              <option value="bank_transfer">Overschrijving</option>
-              <option value="other">Andere</option>
-            </select>
-
             {confirmError && <p className="error-text">{confirmError}</p>}
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -1924,7 +2045,16 @@ export default function Backend() {
               </>
             )}
 
-            {ctxMenu.soort === "tijdslot" && (
+            {ctxMenu.soort === "tijdsblok" && (
+              <>
+                <div className="ctx-kop">{ctxMenu.ev.title || "Tijdsblok"} — {ctxMenu.ev.start}–{ctxMenu.ev.end}</div>
+                <button type="button" onClick={() => { const ev = ctxMenu.ev; setCtxMenu(null); openEditTimeBlock(ev); }}>Tijdsblok aanpassen</button>
+                <div className="ctx-scheiding" />
+                <button type="button" className="gevaar" onClick={() => verwijderTijdsblok(ctxMenu.ev.sessionId)}>Tijdsblok verwijderen</button>
+              </>
+            )}
+
+                        {ctxMenu.soort === "tijdslot" && (
               <>
                 <div className="ctx-kop">
                   Tijdslot {ctxMenu.start} — {ctxMenu.vrijeRooms} vrij, {ctxMenu.geslotenRooms} gesloten
@@ -2179,6 +2309,13 @@ const css = `
   .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); color: #2A1B14; }
   .cal-event.personal { background: var(--private-bg); color: #2B2A26; border-left: 3px solid #6E6A5F; font-style: italic; }
   .cal-event.private { background: var(--private-bg); color: #2B2A26; border-left: 3px solid #6E6A5F; }
+  /* Eigen tijdsblok — paars (Robin, aug 2026). Net als bij de blokken
+     hierboven staat de tekstkleur er expliciet bij: zonder die regel erft het
+     blok de bijna-witte tekstkleur van het donkere thema en valt de titel weg
+     op de lichte paarse achtergrond. Contrast van #FFFFFF-achtige lila
+     (#EDE6F7) met #2E1B4D is ongeveer 12:1, ruim boven de 4,5:1 die leesbaar
+     heet. */
+  .cal-event.tijdsblok { background: #EDE6F7; color: #2E1B4D; border-left: 3px solid #6B3FA0; }
   .cal-event.pending-reservation { border: 1px dashed var(--admin-text-muted); border-left-width: 3px; opacity: 0.85; }
   .cal-event.clickable { cursor: pointer; }
   .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
