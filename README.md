@@ -801,6 +801,17 @@ of 005 al gedraaid is en stopt met een duidelijke boodschap als dat niet zo is.
 `migration_test.js` (deel van `npm test`) bootst precies deze situatie na en
 controleert de hele keten.
 
+## Welke versie draait er?
+
+Rechts van "Agenda" in de kop van `/backend` staat het versienummer van de
+build die op dat moment draait (bv. "V57"). Dat getal staat op één plek, in
+`next.config.js` (`env: { APP_VERSIE }`), en moet bij elke nieuwe versie mee
+opgehoogd worden.
+
+Reden: zonder dat nummer is "die functie werkt niet" niet te onderscheiden van
+"die versie staat nog niet op Vercel". Dat is één keer misgelopen (aug 2026) —
+grote groepen werden geweigerd op een deploy die de functie nog niet had.
+
 ## Uurrooster Action Painting
 
 Afgesproken met Robin, augustus 2026:

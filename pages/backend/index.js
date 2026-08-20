@@ -1294,7 +1294,14 @@ export default function Backend() {
     <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--admin-bg)", color: "var(--admin-text)", fontFamily: "inherit" }}>
       <style>{css}</style>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--admin-line)" }}>
-        <h1 style={{ fontSize: 20, margin: 0, color: "var(--admin-accent)" }}>Agenda</h1>
+        <h1 style={{ fontSize: 20, margin: 0, color: "var(--admin-accent)" }}>
+          Agenda
+          {process.env.APP_VERSIE && (
+            <span style={{ fontSize: 11, fontWeight: 400, color: "var(--admin-text-muted)", marginLeft: 8 }}>
+              V{process.env.APP_VERSIE}
+            </span>
+          )}
+        </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <label className="theme-switch" title="Donkere modus">
             <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} />
@@ -1601,10 +1608,11 @@ export default function Backend() {
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitManual}>
             <h3>Boeking toevoegen</h3>
             <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
-              Voor een boeking die je zelf ingeeft (bv. na een telefoontje). Nooit via Mollie —
-              kies hieronder hoe er (al dan niet) betaald werd. Verwacht je dat de details nog
+              Voor een boeking die je zelf ingeeft (bv. na een telefoontje). Nooit via Mollie:
+              ze wordt meteen als betaald geregistreerd. Verwacht je dat de details nog
               wijzigen? Vink "enkel reserveren" aan: dan wordt niets definitief (geen factuur,
               geen cadeaubon-afschrijving) tot je de boeking later zelf bevestigt.
+              Elke dag en elk uur kan — staat er nog geen sessie, dan wordt die aangemaakt.
             </p>
 
             <label className="field-label">Workshop</label>
