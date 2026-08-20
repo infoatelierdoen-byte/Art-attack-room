@@ -114,7 +114,16 @@ export default async function handler(req, res) {
         slots.push(slot);
       }
 
-      const boekingenVanDeDag = dagEvents.filter(e => e.kind === "service" && e.bookingId);
+      // Let op: een grote groep neemt twee rooms in en komt daardoor als TWEE
+      // events terug (één per room). Voor de dagtotalen moet die boeking maar
+      // één keer meetellen — anders staat er dubbel zoveel omzet op het blad.
+      const gezien = new Set();
+      const boekingenVanDeDag = dagEvents.filter(e => {
+        if (e.kind !== "service" || !e.bookingId) return false;
+        if (gezien.has(e.bookingId)) return false;
+        gezien.add(e.bookingId);
+        return true;
+      });
       const totaal = {
         boekingen: boekingenVanDeDag.length,
         personen: boekingenVanDeDag.reduce((s, b) => s + (b.partySize || 0), 0),

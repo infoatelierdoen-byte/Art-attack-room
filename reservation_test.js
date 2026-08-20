@@ -281,9 +281,14 @@ async function main() {
     let psNul = false;
     try { await store.changePartySize(psB.id, { partySize: 0 }); } catch (e) { psNul = /geldig aantal/i.test(e.message); }
     log("Nul personen geweigerd", psNul);
-    let psVeel = false;
-    try { await store.changePartySize(psB.id, { partySize: 99 }); } catch (e) { psVeel = /maximum/i.test(e.message); }
-    log("99 personen geweigerd (boven het maximum van de dienst)", psVeel);
+    // 99 personen werd vroeger geweigerd op de online limiet van 7. Die geldt
+    // sinds aug 2026 niet meer in de backoffice: het team beslist zelf, dus er
+    // is geen bovengrens en geen waarschuwing meer. Zolang er twee rooms vrij
+    // zijn, gaat het door.
+    const psVeel = await store.changePartySize(psB.id, { partySize: 99 });
+    log("Een onrealistisch groot aantal wordt niet tegengehouden", psVeel.ok === true,
+        psVeel.roomCodes.join("+"));
+    await store.changePartySize(psB.id, { partySize: 5 }); // terugzetten voor de volgende tests
 
     // Volle sessie: alle rooms bezet -> geen plaats meer voor een grotere groep.
     const psExtra = [];
@@ -386,6 +391,219 @@ async function main() {
     log("Weekagenda geeft partySize mee voor het personen-badge", refEv && refEv.partySize === 2, refEv && refEv.partySize);
 
     // ================================================================
+    // Zelf een uur kiezen bij een manuele boeking (aug 2026)
+    // ================================================================
+    // Aan de telefoon wordt er soms een uur afgesproken dat niet in het vaste
+    // rooster staat. Dat moet gewoon kunnen; de sessie wordt dan eenmalig
+    // aangemaakt, zonder het uurrooster te veranderen.
+    const { toISODate: naarISOv } = require(path.join(PROJECT, "lib/dateUtils.js"));
+    let vrijUurDag = null;
+    for (let i = 1; i <= 40 && !vrijUurDag; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISOv(d);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      if (av.length > 0 && !av.some(sl => sl.start === "10:15")) vrijUurDag = iso;
+    }
+    const sessiesVoor = (await pool.query(
+      "SELECT COUNT(*)::int c FROM sessions WHERE service_id IS NOT NULL")).rows[0].c;
+
+    const { booking: eigenUur } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: vrijUurDag, start: "10:15", partySize: 4,
+      customer: { name: "Eigen Uur Klant" }, note: ""
+    });
+    log("Een boeking op een uur dat niet bestond, slaagt", !!eigenUur.id);
+
+    const { rows: nieuweSessie } = await pool.query(
+      `SELECT recurrence_rule_id, end_datetime FROM sessions
+        WHERE service_id IS NOT NULL AND start_datetime = $1`,
+      [new Date(`${vrijUurDag}T10:15:00`)]
+    );
+    log("Er is precies één sessie aangemaakt op dat uur", nieuweSessie.length === 1, `${nieuweSessie.length}`);
+    log("Die sessie hangt aan geen enkele herhalingsregel (eenmalig)",
+        nieuweSessie[0] && nieuweSessie[0].recurrence_rule_id === null);
+    log("De duur klopt (90 minuten)",
+        nieuweSessie[0] && (nieuweSessie[0].end_datetime - new Date(`${vrijUurDag}T10:15:00`)) === 90 * 60000);
+
+    const sessiesNa = (await pool.query(
+      "SELECT COUNT(*)::int c FROM sessions WHERE service_id IS NOT NULL")).rows[0].c;
+    log("Er kwam maar één sessie bij", sessiesNa === sessiesVoor + 1, `${sessiesVoor} -> ${sessiesNa}`);
+
+    // Het vaste uurrooster mag hier niet door veranderen.
+    const regelsNa = (await pool.query("SELECT COUNT(*)::int c FROM recurrence_rules")).rows[0].c;
+    log("Het vaste uurrooster is ongewijzigd", regelsNa > 0);
+
+    // De boeking staat gewoon in de agenda, met een room.
+    const eigenUurWeek = await store.getWeekSessions(mondayOfISO(vrijUurDag));
+    const eigenUurEv = eigenUurWeek.find(e => e.bookingId === eigenUur.id);
+    log("Het nieuwe uur staat in de weekagenda", !!eigenUurEv && eigenUurEv.start === "10:15",
+        eigenUurEv && eigenUurEv.start);
+    log("En er is een room aan toegewezen", !!(eigenUurEv && eigenUurEv.roomCode), eigenUurEv && eigenUurEv.roomCode);
+
+    // Een tweede boeking op datzelfde nieuwe uur hoort in dezelfde sessie te
+    // landen, niet in een tweede sessie ernaast.
+    await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: vrijUurDag, start: "10:15", partySize: 2,
+      customer: { name: "Tweede Op Eigen Uur" }, note: ""
+    });
+    const sessiesNaTwee = (await pool.query(
+      "SELECT COUNT(*)::int c FROM sessions WHERE service_id IS NOT NULL")).rows[0].c;
+    log("Een tweede boeking op dat uur maakt geen extra sessie aan", sessiesNaTwee === sessiesNa,
+        `${sessiesNa} -> ${sessiesNaTwee}`);
+
+    // ================================================================
+    // Grote groepen manueel boeken (aug 2026)
+    // ================================================================
+    // De online limiet van 7 personen mag een manuele boeking niet tegenhouden,
+    // en een groep die niet in room A past neemt automatisch room VR erbij.
+    const { toISODate: naarISO0 } = require(path.join(PROJECT, "lib/dateUtils.js"));
+    let groepDag = null, groepStart = null;
+    for (let i = 1; i <= 40 && !groepStart; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO0(d);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      // Een tijdslot waar nog NIETS geboekt is: alle vier de rooms vrij.
+      const heelVrij = av.find(sl => sl.roomsLeft === 4);
+      if (heelVrij) { groepDag = iso; groepStart = heelVrij.start; }
+    }
+
+    // Online blijft 7 het maximum.
+    let onlineGeweigerd = false;
+    try {
+      await store.createBooking({
+        serviceCode: "action_painting", dateISO: groepDag, start: groepStart, partySize: 15,
+        customer: { name: "Te Grote Groep", email: "tegroot@test.be", birthDate: "1990-01-01" },
+        note: "", termsAccepted: true, marketingOptIn: false
+      });
+    } catch (err) { onlineGeweigerd = /niet online geboekt/i.test(err.message); }
+    log("Online blijft een groep van 15 geweigerd", onlineGeweigerd);
+
+    // Manueel moet het wél kunnen, met room A + VR.
+    const { booking: groep } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: groepDag, start: groepStart, partySize: 15,
+      customer: { name: "Grote Groep", email: "grotegroep@test.be" }, note: "verjaardagsfeest"
+    });
+    log("Een groep van 15 kan manueel geboekt worden", !!groep.id);
+    log("Room A én room VR worden automatisch ingenomen",
+        groep.roomCodes.includes("A") && groep.roomCodes.includes("VR") && groep.roomCodes.length === 2,
+        JSON.stringify(groep.roomCodes));
+    log("Room A en room VR samen zijn 17 plaatsen — genoeg voor deze groep",
+        groep.roomCodes.join("+") === "A+VR");
+    log("Prijs loopt door aan €52 per persoon boven de trap", groep.amountDue === 780, `€${groep.amountDue}`);
+
+    const { rows: groepRooms } = await pool.query(
+      `SELECT r.code FROM room_bookings rb JOIN rooms r ON r.id = rb.room_id
+        WHERE rb.booking_id = $1 ORDER BY r.code`, [groep.id]);
+    log("Er staan twee room-rijen in de database", groepRooms.length === 2,
+        groepRooms.map(r => r.code).join("+"));
+
+    // In de agenda staat de boeking in beide rooms, zodat niemand er nog op kan.
+    const groepWeek = await store.getWeekSessions(mondayOfISO(groepDag));
+    const groepEvents = groepWeek.filter(e => e.bookingId === groep.id);
+    log("De boeking staat in de agenda in twee rooms", groepEvents.length === 2,
+        groepEvents.map(e => e.roomCode).join("+"));
+    log("Beide agenda-blokken tonen dezelfde klant",
+        groepEvents.every(e => e.customer === "Grote Groep"));
+
+    // Dat tijdslot heeft nu enkel nog VL en M vrij (12 plaatsen). Een tweede
+    // groep van 15 wordt niet geweigerd — die krijgt de twee overblijvende
+    // rooms. Het team beslist zelf wat het daarmee doet; het systeem houdt
+    // niets tegen en waarschuwt niet (Robin, aug 2026).
+    const { booking: tweede } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: groepDag, start: groepStart, partySize: 15,
+      customer: { name: "Nog Een Groep" }, note: ""
+    });
+    log("Een tweede groep krijgt de overblijvende rooms (VL en M)",
+        tweede.roomCodes.includes("VL") && tweede.roomCodes.includes("M"), JSON.stringify(tweede.roomCodes));
+
+    // Nu is er écht niets meer vrij op dat uur.
+    let derdeGeweigerd = false;
+    try {
+      await store.createManualBooking({
+        serviceCode: "action_painting", dateISO: groepDag, start: groepStart, partySize: 15,
+        customer: { name: "Derde Groep" }, note: ""
+      });
+    } catch (err) { derdeGeweigerd = /volzet/i.test(err.message); }
+    log("Een derde groep wordt wél geweigerd — alle rooms zijn op", derdeGeweigerd);
+
+    // Een groep boven de 17 mag wél — het team sluit de rest zelf.
+    let xlDag = null, xlStart = null;
+    for (let i = 1; i <= 40 && !xlStart; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO0(d);
+      if (iso === groepDag) continue;
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const heelVrij = av.find(sl => sl.roomsLeft === 4);
+      if (heelVrij) { xlDag = iso; xlStart = heelVrij.start; }
+    }
+    const { booking: xl } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: xlDag, start: xlStart, partySize: 22,
+      customer: { name: "Zeer Grote Groep" }, note: ""
+    });
+    log("Een groep van 22 wordt niet geweigerd", !!xl.id);
+    log("Ook een groep van 22 krijgt gewoon room A en VR", xl.roomCodes.join("+") === "A+VR", xl.roomCodes.join("+"));
+
+    // Eigen bedrag afspreken.
+    let eigenDag = null, eigenStart = null;
+    for (let i = 1; i <= 40 && !eigenStart; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO0(d);
+      if (iso === groepDag || iso === xlDag) continue;
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const heelVrij = av.find(sl => sl.roomsLeft === 4);
+      if (heelVrij) { eigenDag = iso; eigenStart = heelVrij.start; }
+    }
+    const { booking: eigenPrijs } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: eigenDag, start: eigenStart, partySize: 12,
+      customer: { name: "Onderhandelde Groep" }, note: "", amountOverride: 650
+    });
+    log("Een eigen bedrag overschrijft de berekende prijs", eigenPrijs.amountDue === 650, `€${eigenPrijs.amountDue}`);
+
+    // De beschikbaarheid: online onboekbaar, in de backoffice wél.
+    const avOnline = await store.getAvailability("action_painting", xlDag, 15);
+    const avBackoffice = await store.getAvailability("action_painting", xlDag, 15, true);
+    const slotOnline = avOnline.find(sl => sl.start !== xlStart && sl.roomsLeft === 4);
+    const slotBack = avBackoffice.find(sl => sl.start === (slotOnline && slotOnline.start));
+    log("15 personen is online nooit boekbaar", !!slotOnline && slotOnline.bookable === false);
+    log("15 personen is in de backoffice wél boekbaar", !!slotBack && slotBack.bookable === true);
+
+    // Aantal personen achteraf ophogen tot boven één room.
+    const { booking: klein } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: eigenDag, start: eigenStart, partySize: 2,
+      customer: { name: "Groeit Nog" }, note: ""
+    });
+    const gegroeid = await store.changePartySize(klein.id, { partySize: 14, recalculatePrice: true });
+    log("Een bestaande boeking kan naar 14 personen groeien", gegroeid.ok === true);
+    log("Die boeking krijgt dan ook twee rooms", gegroeid.roomCodes.length === 2, gegroeid.roomCodes.join("+"));
+    log("En de prijs wordt herrekend aan €52 p.p.", gegroeid.amountDue === 728, `€${gegroeid.amountDue}`);
+    const { rows: naGroei } = await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [klein.id]);
+    log("De oude room-rij is opgeruimd (precies 2 rijen)", naGroei[0].c === 2, `${naGroei[0].c} rijen`);
+
+    // Verplaatsen moet beide rooms meenemen.
+    let verplaatsDag = null, verplaatsStart = null;
+    for (let i = 1; i <= 40 && !verplaatsStart; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISO0(d);
+      if ([groepDag, xlDag, eigenDag].includes(iso)) continue;
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const heelVrij = av.find(sl => sl.roomsLeft === 4);
+      if (heelVrij) { verplaatsDag = iso; verplaatsStart = heelVrij.start; }
+    }
+    const groepVerplaatst = await store.rescheduleBooking(groep.id, { dateISO: verplaatsDag, start: verplaatsStart });
+    const { rows: naVerplaatsing } = await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [groepVerplaatst.newBookingId]);
+    log("Een verplaatste groep van 15 houdt twee rooms", naVerplaatsing[0].c === 2, `${naVerplaatsing[0].c} rooms`);
+    const { rows: oudeRooms } = await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [groep.id]);
+    log("De rooms van het oude tijdstip komen vrij", oudeRooms[0].c === 0);
+
+    // Annuleren geeft beide rooms vrij.
+    await store.cancelBooking(groepVerplaatst.newBookingId, {});
+    const { rows: naAnnulatie } = await pool.query(
+      "SELECT COUNT(*)::int c FROM room_bookings WHERE booking_id = $1", [groepVerplaatst.newBookingId]);
+    log("Annuleren geeft allebei de rooms weer vrij", naAnnulatie[0].c === 0);
+
+    // ================================================================
     // Boeking zonder e-mailadres (aug 2026)
     // ================================================================
     // Aan de balie of aan de telefoon heeft niet elke klant een e-mailadres.
@@ -396,7 +614,9 @@ async function main() {
       const d = new Date(); d.setDate(d.getDate() + i);
       const iso = naarISO(d);
       const av = await store.getAvailability("action_painting", iso, 2);
-      const free = av.find(sl => sl.bookable);
+      // Een tijdslot met alle vier de rooms nog vrij: hieronder worden er drie
+      // boekingen op hetzelfde uur gemaakt.
+      const free = av.find(sl => sl.bookable && sl.roomsLeft === 4);
       if (free) geenMailSlot = { iso, start: free.start };
     }
     const { booking: zonderMail } = await store.createManualBooking({
@@ -569,6 +789,23 @@ async function main() {
     log("CSV-veld quoot een puntkomma (Excel-NL splitst daarop)", csvVeld("a;b") === '"a;b"', csvVeld("a;b"));
     log("CSV-veld verdubbelt aanhalingstekens", csvVeld('zeg "hallo"') === '"zeg ""hallo"""', csvVeld('zeg "hallo"'));
 
+    // Een grote groep staat in twee rooms en dus op twee rijen. Het bedrag mag
+    // maar één keer meetellen, anders klopt een som in Excel niet.
+    const xlData = await store.getAgendaExportRows(mondayOfISO(xlDag), addDaysISO(mondayOfISO(xlDag), 6));
+    const xlRijen = bouwRijen({ ...xlData, rooms: expRooms, alleenGeboekt: true });
+    const naamKol2 = KOLOMMEN.indexOf("Boeking Contactnaam");
+    const bedragKol = KOLOMMEN.indexOf("Bedrag");
+    const personenKol = KOLOMMEN.indexOf("Aantal personen");
+    const xlEigen = xlRijen.filter(r => r[naamKol2] === "Zeer Grote Groep");
+    log("Een groep over twee rooms geeft twee rijen in de export", xlEigen.length === 2, `${xlEigen.length} rijen`);
+    log("Het bedrag staat maar op één van beide rijen",
+        xlEigen.filter(r => r[bedragKol] !== "").length === 1,
+        xlEigen.map(r => r[bedragKol] || "(leeg)").join(" / "));
+    log("Het aantal personen staat ook maar één keer",
+        xlEigen.filter(r => r[personenKol] !== "").length === 1);
+    log("De tweede rij zegt dat het dezelfde boeking is",
+        xlEigen.some(r => /extra room van dezelfde boeking/.test(r[KOLOMMEN.indexOf("Notitie")])));
+
     // En tenslotte: de samengestelde CSV terug inlezen met dezelfde parser als
     // de Wix-import, zodat we zeker weten dat Excel hetzelfde rooster ziet.
     const { parse } = require("csv-parse/sync");
@@ -599,6 +836,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error("FATAL:", err);
+  console.error("FATAL:", err && err.stack || err);
   process.exitCode = 1;
 });

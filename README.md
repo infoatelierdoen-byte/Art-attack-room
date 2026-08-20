@@ -56,6 +56,14 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   gebruikt de vaste prijs per persoon uit `services.price`. Foutmeldingen
   voor groepen buiten de toegelaten online-grootte zijn DB-gedreven
   (`min_online_party_size`/`max_online_party_size`).
+
+  Bóven de trap (enkel mogelijk via een manuele boeking) wordt er
+  doorgerekend aan de prijs per persoon van de hoogste trede: 7p = €364, dus
+  €52 per persoon, en 15 personen = €780. Dat getal staat bewust niet in de
+  code maar wordt uit de tabel afgeleid, zodat het meeschuift als de prijstrap
+  ooit verandert. In het boekingsscherm verschijnt bij meer dan 7 personen een
+  vakje **Totaalbedrag** om een afgesproken prijs zelf te zetten — voor een
+  grote groep wordt vaak apart onderhandeld.
 - **Vast uurrooster**: sessies (Action Painting: wo/do/vr/za/zo op de
   afgesproken uren, met de donderdag-cutoff op 31/08; Fluid Art:
   tweewekelijks op dinsdag 19u) worden berekend uit `recurrence_rules` in de
@@ -67,6 +75,30 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   tijdslot wordt pas "volzet" als alle rooms bezet zijn). Roomdetails worden
   nergens naar de klant teruggestuurd — de API geeft enkel `bookable: true/false`
   terug.
+
+  **Grote groepen nemen twee rooms in** (`roomsForPartySize()`, aug 2026).
+  Online blijft het bij één room per boeking — de widget verkoopt nooit meer
+  dan 7 personen. Maar aan de balie of aan de telefoon komen er groepen van 15
+  of 20 binnen, en die moeten gewoon ingegeven kunnen worden. Past de groep
+  niet in room A (10 plaatsen), dan komt **room VR** er automatisch bij, zoals
+  Robin het vroeg — samen 17 plaatsen. Is VR net bezet, dan valt het terug op
+  VL (zelfde capaciteit) en anders op M; zonder die terugval zou een boeking
+  geweigerd worden terwijl er een identieke room leegstaat.
+
+  Beide rooms komen als aparte `room_bookings`-rij op dezelfde boeking te
+  staan. In de agenda staat de klant dus in twee vakjes, en niemand kan er nog
+  op boeken. Is de groep zelfs voor twee rooms te groot (meer dan 17), dan
+  wordt de boeking **niet** geweigerd en volgt er ook **geen waarschuwing**:
+  het team beslist zelf welke rooms het daarvoor nog sluit (Robin, aug 2026).
+  Er is bewust geen bovengrens ingebouwd. Het boekingsscherm vermeldt enkel,
+  vóór het opslaan, welke rooms ingenomen worden — een vaststelling, geen
+  advies.
+
+  Let op waar dit doorwerkt: één boeking geeft dan **twee** events terug uit
+  `getWeekSessions()`. De dagtotalen in de PDF-export en de bedragkolommen in
+  de CSV-export tellen die boeking daarom bewust maar één keer — anders staat
+  er dubbel zoveel omzet op het blad. De tweede rij in de CSV draagt het
+  label "extra room van dezelfde boeking".
 - **Boekingsflow** (`/widget` + `/api/bookings`): groepsgrootte kiezen,
   kalenderweergave (tot 3 maanden vooruit), tijdstip kiezen, klantgegevens
   (incl. geboortedatum en notitie), algemene voorwaarden verplicht,
@@ -98,6 +130,28 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   bevestigingsmail — bij een manuele boeking heeft het team de klant al
   rechtstreeks gesproken, dus zowel de klantbevestiging als de interne
   meldingsmail zouden overbodig zijn.
+
+  **Je kan zelf een uur kiezen** (aug 2026). Onder de bestaande tijdsloten
+  staat een vrij uurveld: spreek je aan de telefoon 10:15 af terwijl het vaste
+  rooster op 11:00 begint, dan wordt die sessie eenmalig aangemaakt
+  (`recurrence_rule_id` blijft NULL, het uurrooster verandert er niet door) —
+  dezelfde aanpak als bij het verplaatsen van een boeking. Een tweede boeking
+  op datzelfde uur belandt in dezelfde sessie, niet in een tweede ernaast.
+
+  Zo'n zelfgekozen uur kan wél over het vaste rooster heen vallen. In de
+  weekagenda delen twee overlappende tijdsloten daarom de breedte van de
+  dagkolom (`buildRoomGrid()`), en toont het slot mét boekingen enkel zijn
+  bezette rooms — vier cellen naast vier andere passen niet in ~170 pixels, en
+  een vrije room op 10:15 zegt toch niets. Het slot zónder boekingen (meestal
+  het gewone uurrooster) houdt zijn vier rooms, zodat dat niet uit de agenda
+  verdwijnt.
+
+  **De online limiet van 7 personen geldt hier niet** (Robin, aug 2026): een
+  groep van 15 of 20 kan gewoon ingegeven worden, en neemt dan automatisch
+  room A én room VR in — zie "Automatische room-toewijzing" hierboven. Het
+  boekingsscherm haalt zijn tijdsloten daarom uit `/api/admin/availability`
+  (staff-only, dezelfde regels als de backoffice) en niet uit het publieke
+  `/api/availability`, dat die grotere groepen wél moet blijven weigeren.
 
   **Enkel de naam is verplicht.** Geboortedatum was hier al optioneel, en
   sinds aug 2026 geldt dat ook voor het e-mailadres: aan de balie of aan de

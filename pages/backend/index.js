@@ -114,38 +114,91 @@ function buildRoomGrid(dayEvents, roomOrder) {
     }
   });
 
+  // Overlappende tijdsloten naast elkaar zetten in plaats van over elkaar.
+  //
+  // In het vaste uurrooster overlapt er niets (14:00, 16:30, 19:00 met 90
+  // minuten elk). Maar sinds het team bij een manuele boeking zelf een uur mag
+  // kiezen (Robin, aug 2026) kan er wél een sessie van 10:15 naast die van
+  // 11:00 komen te staan. Zonder deze verdeling tekenden die twee rijen rooms
+  // exact over elkaar en was geen van beide nog leesbaar.
+  //
+  // Dezelfde greedy aanpak als layoutDayEvents() hierboven: overlappende
+  // sloten vormen een cluster en delen de breedte van de dagkolom.
+  const slots = [...slotMap.values()]
+    .map(slot => {
+      const startMin = timeToMinutes(slot.start);
+      return { ...slot, startMin, endMin: startMin + (slot.durationMin || 90), kolom: 0, kolommen: 1 };
+    })
+    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+  let actief = [];
+  let cluster = [];
+  const sluitCluster = () => {
+    if (cluster.length === 0) return;
+    const max = cluster.reduce((m, it) => Math.max(m, it.kolom + 1), 1);
+    cluster.forEach(it => { it.kolommen = max; });
+    cluster = [];
+  };
+  for (const slot of slots) {
+    actief = actief.filter(a => a.endMin > slot.startMin);
+    if (actief.length === 0) sluitCluster();
+    const bezet = new Set(actief.map(a => a.kolom));
+    let k = 0;
+    while (bezet.has(k)) k++;
+    slot.kolom = k;
+    actief.push(slot);
+    cluster.push(slot);
+  }
+  sluitCluster();
+
   const cells = [];
-  for (const slot of slotMap.values()) {
-    const startMin = timeToMinutes(slot.start);
+  for (const slot of slots) {
+    const startMin = slot.startMin;
     const top = ((startMin / 60) - HOUR_START) * HOUR_PX;
     const height = (slot.durationMin / 60) * HOUR_PX;
+    // De strook van de dagkolom die dit tijdslot mag gebruiken. Zonder overlap
+    // is dat gewoon de volle breedte (kolommen = 1).
+    const bandLinks = slot.kolom / slot.kolommen;
+    const bandBreedte = 1 / slot.kolommen;
 
     // Breedte naar belang verdelen in plaats van vier gelijke kolommen. Een
     // dagkolom is maar ~170px breed; vier gelijke cellen geven een veertigtal
     // pixels elk, te weinig voor een naam. Een geboekte cel weegt daarom dubbel
     // zo zwaar als een vrije. De VOLGORDE van de rooms blijft ongewijzigd, dus
     // M staat nog altijd links en A rechts.
-    const inhoud = roomOrder.map(room => {
+    const alleRooms = roomOrder.map(room => {
       const booking = roomEvents.find(e => e.start === slot.start && e.roomCode === room.id);
       const closed = closedEvents.find(e => e.start === slot.start && e.roomCode === room.id);
       return { room, booking, closed, gewicht: booking ? 2 : 1 };
     });
-    const totaal = inhoud.reduce((som, c) => som + c.gewicht, 0);
+    // Deelt dit tijdslot zijn strook met een ander (een zelfgekozen uur dat
+    // over het vaste rooster heen valt), dan is er geen plaats voor vier
+    // cellen naast elkaar. Van een slot met boekingen tonen we dan enkel wat
+    // er écht staat — een vrije room op 10:15 zegt toch niets, dat uur bestaat
+    // enkel omdát er iemand geboekt is. Een slot zónder boekingen houdt wél
+    // zijn vier rooms: dat is meestal het gewone uurrooster, en dat mag niet
+    // uit de agenda verdwijnen omdat er toevallig iets overheen valt.
+    const bezetteCellen = alleRooms.filter(c => c.booking || c.closed);
+    const inhoud = slot.kolommen > 1 && bezetteCellen.length > 0 ? bezetteCellen : alleRooms;
+    const totaal = inhoud.reduce((som, c) => som + c.gewicht, 0) || 1;
 
     // Het tijdslot zelf als klein label boven de rij rooms. Dat geeft je meteen
     // het uur per dag (dat stond enkel in de balk links), én een plek om op te
     // rechtsklikken voor acties die over het hele tijdslot gaan.
-    const vrijInSlot = inhoud.filter(c => !c.booking && !c.closed).length;
-    const geslotenInSlot = inhoud.filter(c => c.closed).length;
+    // Voor het rechtermuismenu telt wél de volledige lijst rooms — anders zou
+    // "dit tijdslot sluiten" op een gedeeld uur denken dat er niets vrij is.
+    const vrijInSlot = alleRooms.filter(c => !c.booking && !c.closed).length;
+    const geslotenInSlot = alleRooms.filter(c => c.closed).length;
     cells.push({
-      key: `${slot.start}-tag`, kind: "slotTag", top: top - 15, left: "2px", height: 14,
+      key: `${slot.start}-tag`, kind: "slotTag", top: top - 15,
+      left: `calc(${bandLinks * 100}% + 2px)`, height: 14,
       slotStart: slot.start, vrijInSlot, geslotenInSlot
     });
 
     let gepasseerd = 0;
     inhoud.forEach(({ room, booking, closed, gewicht }) => {
-      const left = `calc(${(gepasseerd / totaal) * 100}% + 2px)`;
-      const width = `calc(${(gewicht / totaal) * 100}% - 4px)`;
+      const left = `calc(${(bandLinks + (gepasseerd / totaal) * bandBreedte) * 100}% + 2px)`;
+      const width = `calc(${(gewicht / totaal) * bandBreedte * 100}% - 4px)`;
       gepasseerd += gewicht;
       const gemeen = { slotStart: slot.start, vrijInSlot, geslotenInSlot };
       if (booking) {
@@ -173,7 +226,7 @@ const EMPTY_MANUAL_FORM = {
   serviceCode: "", dateISO: "", start: "", partySize: 2,
   name: "", email: "", phone: "", birthDate: "", note: "",
   invoiceRequested: false, vatNumber: "", companyName: "",
-  giftCardCode: "", reserveOnly: false
+  giftCardCode: "", reserveOnly: false, amountOverride: ""
 };
 
 const EMPTY_CLOSE_FORM = {
@@ -509,7 +562,10 @@ export default function Backend() {
   function fetchManualSlots(serviceCode, dateISO, partySize) {
     if (!serviceCode || !dateISO) { setManualSlots([]); return; }
     setManualLoadingSlots(true);
-    fetch(`/api/availability?service=${serviceCode}&date=${dateISO}&partySize=${partySize || 1}`)
+    // Bewust de ADMIN-route: een groep die niet in één room past mag hier wél
+    // geboekt worden (die neemt automatisch een tweede room in). Het publieke
+    // /api/availability blijft de online limiet van 7 aanhouden.
+    fetch(`/api/admin/availability?service=${serviceCode}&date=${dateISO}&partySize=${partySize || 1}`)
       .then(r => r.json())
       .then(d => setManualSlots(d.slots || []))
       .finally(() => setManualLoadingSlots(false));
@@ -523,6 +579,10 @@ export default function Backend() {
       fetchManualSlots(next.serviceCode, next.dateISO, next.partySize);
     }
   }
+
+  // Het ingegeven aantal als getal — de invoer is een tekstveld, dus tijdens
+  // het typen kan dit even NaN zijn.
+  const grotereGroep = Number(manualForm.partySize) || 0;
 
   async function submitManual(e) {
     e.preventDefault();
@@ -549,7 +609,8 @@ export default function Backend() {
             ? { vatNumber: manualForm.vatNumber, companyName: manualForm.companyName }
             : null,
           giftCardCode: manualForm.giftCardCode.trim() || null,
-          reserveOnly: manualForm.reserveOnly
+          reserveOnly: manualForm.reserveOnly,
+          amountOverride: manualForm.amountOverride.trim() || null
         })
       });
       const data = await res.json();
@@ -1564,6 +1625,17 @@ export default function Backend() {
               </div>
             </div>
 
+            {/* De online limiet van 7 geldt hier niet (Robin, aug 2026). Past
+                de groep niet in room A (10 plaatsen), dan komt room VR er
+                automatisch bij. Bewust enkel de vaststelling, geen advies:
+                welke rooms er eventueel nog bijgesloten worden beslist het
+                team zelf. */}
+            {grotereGroep > 10 && (
+              <p style={{ fontSize: 12, color: "var(--admin-accent)", margin: "-4px 0 0", fontWeight: 700 }}>
+                {grotereGroep} personen: room A en room VR worden ingenomen.
+              </p>
+            )}
+
             {manualForm.dateISO && (
               <div>
                 <label className="field-label">Tijdstip</label>
@@ -1578,6 +1650,18 @@ export default function Backend() {
                     </button>
                   ))}
                 </div>
+
+                {/* Zelf een uur kiezen (Robin, aug 2026). Aan de telefoon wordt
+                    er soms een uur afgesproken dat niet in het vaste rooster
+                    staat; dan wordt die sessie eenmalig aangemaakt, net als bij
+                    het verplaatsen van een boeking. */}
+                <label className="field-label" style={{ marginTop: 10 }}>Of een ander uur</label>
+                <input type="time" value={manualForm.start}
+                  onChange={e => setManualForm(f => ({ ...f, start: e.target.value }))} />
+                <p style={{ fontSize: 12, color: "var(--admin-text-muted)", margin: "4px 0 0" }}>
+                  Staat er nog geen sessie op dat uur, dan wordt die eenmalig aangemaakt.
+                  Het vaste uurrooster verandert daar niet door.
+                </p>
               </div>
             )}
 
@@ -1598,6 +1682,20 @@ export default function Backend() {
             </div>
             <textarea placeholder="Notitie (optioneel)" value={manualForm.note}
               onChange={e => setManualForm({ ...manualForm, note: e.target.value })} style={{ minHeight: 50 }} />
+
+            {/* Boven 7 personen stopt de prijstrap. Het systeem rekent dan
+                door aan de prijs per persoon van de hoogste trede (€52), maar
+                voor een grote groep wordt vaak apart onderhandeld — vandaar
+                dit vakje om het afgesproken bedrag zelf te zetten. */}
+            {grotereGroep > 7 && (
+              <div>
+                <label className="field-label">Totaalbedrag (optioneel)</label>
+                <input type="number" min={0} step="0.01"
+                  placeholder={`Leeg laten = €${(grotereGroep * 52).toFixed(2)} (€52 p.p.)`}
+                  value={manualForm.amountOverride}
+                  onChange={e => setManualForm({ ...manualForm, amountOverride: e.target.value })} />
+              </div>
+            )}
 
             <input placeholder="Cadeaubon-code (optioneel)" value={manualForm.giftCardCode}
               onChange={e => setManualForm({ ...manualForm, giftCardCode: e.target.value })} />
@@ -1870,7 +1968,7 @@ export default function Backend() {
                   <label className="field-label">Aantal personen</label>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <input
-                      type="number" min="1" max="10" step="1"
+                      type="number" min="1" step="1"
                       value={partySizeInput}
                       onChange={e => setPartySizeInput(e.target.value)}
                       style={{ width: 70 }}

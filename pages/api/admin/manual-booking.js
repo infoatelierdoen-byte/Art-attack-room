@@ -17,7 +17,13 @@ export default async function handler(req, res) {
 
   try {
     const { booking } = await store.createManualBooking(req.body);
-    res.status(201).json({ bookingId: booking.id, amountDue: booking.amountDue });
+    // roomCodes hoort erbij sinds grote groepen manueel geboekt kunnen worden
+    // (aug 2026): een groep die niet in één room past neemt er twee in.
+    res.status(201).json({
+      bookingId: booking.id,
+      amountDue: booking.amountDue,
+      roomCodes: booking.roomCodes || []
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
