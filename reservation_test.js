@@ -391,6 +391,83 @@ async function main() {
     log("Weekagenda geeft partySize mee voor het personen-badge", refEv && refEv.partySize === 2, refEv && refEv.partySize);
 
     // ================================================================
+    // Facturatie: BTW-nummer verplicht bij een factuur (aug 2026)
+    // ================================================================
+    const { toISODate: naarISOf } = require(path.join(PROJECT, "lib/dateUtils.js"));
+    let facDag = null, facStart = null;
+    for (let i = 1; i <= 40 && !facStart; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = naarISOf(d);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const vrij = av.find(sl => sl.bookable && sl.roomsLeft === 4);
+      if (vrij) { facDag = iso; facStart = vrij.start; }
+    }
+
+    // Manueel: factuur gevraagd zonder BTW-nummer -> geweigerd.
+    let btwVerplicht = false;
+    try {
+      await store.createManualBooking({
+        serviceCode: "action_painting", dateISO: facDag, start: facStart, partySize: 2,
+        customer: { name: "Factuur Zonder BTW" }, note: "",
+        invoiceRequested: true, invoiceDetails: { companyName: "Test BV" }
+      });
+    } catch (err) { btwVerplicht = /BTW-nummer is verplicht/i.test(err.message); }
+    log("Manuele boeking: factuur zonder BTW-nummer geweigerd", btwVerplicht);
+
+    // Ook een lege of blanco waarde telt als ontbrekend.
+    let btwLeeg = false;
+    try {
+      await store.createManualBooking({
+        serviceCode: "action_painting", dateISO: facDag, start: facStart, partySize: 2,
+        customer: { name: "Factuur Blanco BTW" }, note: "",
+        invoiceRequested: true, invoiceDetails: { vatNumber: "   ", companyName: "Test BV" }
+      });
+    } catch (err) { btwLeeg = /BTW-nummer is verplicht/i.test(err.message); }
+    log("Een blanco BTW-nummer telt als ontbrekend", btwLeeg);
+
+    // Online (widget) net zo goed — anders omzeilt een verzoek de controle.
+    let btwOnline = false;
+    try {
+      await store.createBooking({
+        serviceCode: "action_painting", dateISO: facDag, start: facStart, partySize: 2,
+        customer: { name: "Online Factuur", email: "onlinefactuur@test.be", birthDate: "1990-01-01" },
+        note: "", termsAccepted: true, marketingOptIn: false,
+        invoiceRequested: true, invoiceDetails: { companyName: "Test BV" }
+      });
+    } catch (err) { btwOnline = /BTW-nummer is verplicht/i.test(err.message); }
+    log("Online boeking: factuur zonder BTW-nummer geweigerd", btwOnline);
+
+    // Zonder factuuraanvraag verandert er niets.
+    const { booking: geenFactuur } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: facDag, start: facStart, partySize: 2,
+      customer: { name: "Geen Factuur" }, note: ""
+    });
+    log("Een boeking zonder factuuraanvraag blijft gewoon werken", !!geenFactuur.id);
+
+    // Mét BTW-nummer lukt het wel, en de aanvraag wordt bewaard.
+    const { booking: metFactuur } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: facDag, start: facStart, partySize: 2,
+      customer: { name: "Factuur Met BTW", email: "factuur@test.be" }, note: "",
+      invoiceRequested: true, invoiceDetails: { vatNumber: "BE0123456749", companyName: "Test BV" }
+    });
+    const { rows: facRij } = await pool.query(
+      "SELECT invoice_requested, invoice_vat_number, billit_invoice_id FROM bookings WHERE id = $1",
+      [metFactuur.id]);
+    log("Met BTW-nummer lukt de boeking wél", !!metFactuur.id);
+    log("De factuuraanvraag is bewaard", facRij[0].invoice_requested === true);
+    log("Het BTW-nummer is bewaard", facRij[0].invoice_vat_number === "BE0123456749", facRij[0].invoice_vat_number);
+    // Billit is in de test niet geconfigureerd: er mag dan géén factuurnummer
+    // staan, en de boeking mag daar niet op stuklopen.
+    log("Zonder Billit-sleutels blijft het factuurnummer leeg (boeking slaagt wel)",
+        facRij[0].billit_invoice_id === null);
+
+    // De agenda geeft de factuurstatus mee voor het detailvenster.
+    const facWeek = await store.getWeekSessions(mondayOfISO(facDag));
+    const facEv = facWeek.find(e => e.bookingId === metFactuur.id);
+    log("De weekagenda meldt dat er een factuur gevraagd is", !!facEv && facEv.invoiceRequested === true);
+    log("En dat er (nog) geen Billit-nummer is", !!facEv && facEv.billitInvoiceId === null);
+
+    // ================================================================
     // Zelf een uur kiezen bij een manuele boeking (aug 2026)
     // ================================================================
     // Aan de telefoon wordt er soms een uur afgesproken dat niet in het vaste

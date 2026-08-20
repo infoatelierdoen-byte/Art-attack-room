@@ -456,7 +456,12 @@ export default function Widget() {
                 </label>
                 {form.invoiceRequested && (
                   <>
-                    <input placeholder="BTW-nummer" value={form.vatNumber}
+                    {/* BTW-nummer verplicht bij een factuur (Robin, aug 2026).
+                        Zonder BTW-nummer maakt Billit een factuur op naam van
+                        een privépersoon, en dat is net niet wat een klant die
+                        om een factuur vraagt nodig heeft. De server controleert
+                        dit ook — zie controleerFactuurgegevens(). */}
+                    <input required placeholder="BTW-nummer (verplicht)" value={form.vatNumber}
                       onChange={e => setForm({ ...form, vatNumber: e.target.value })} style={styles.input} />
                     <input placeholder="Bedrijfsnaam" value={form.companyName}
                       onChange={e => setForm({ ...form, companyName: e.target.value })} style={styles.input} />

@@ -212,9 +212,18 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   zelf een POST naar dit endpoint te sturen met een verzonnen `bookingId`.
 - **Billit-facturatie per boeking** (`lib/billit.js`): zodra een boeking met
   "ik wens een factuur" betaald wordt, maakt de app automatisch een echte
-  verkoopfactuur aan via `POST /v1/orders` — als bedrijfsklant (met
-  BTW-nummer) wanneer bedrijfsgegevens zijn ingevuld, anders als
-  privépersoon (zonder BTW-nummer). Onze prijzen zijn BTW-inclusief; het
+  verkoopfactuur aan via `POST /v1/orders`, altijd als bedrijfsklant.
+
+  **Een BTW-nummer is verplicht bij een factuur** (Robin, aug 2026) — in de
+  widget, in de backoffice én serverside
+  (`controleerFactuurgegevens()` in `lib/store-sql.js`). Zonder BTW-nummer
+  zou Billit een factuur op naam van een privépersoon maken, en dat is net
+  niet wat een klant die om een factuur vraagt nodig heeft. De controle staat
+  bewust ook op de server: een `required` in het formulier is een hulpje voor
+  de klant, geen controle — wie het verzoek rechtstreeks opstuurt, omzeilt dat.
+
+  Wie geen factuur vraagt krijgt er geen; die omzet gaat mee in de wekelijkse
+  verzamelfactuur hieronder. Onze prijzen zijn BTW-inclusief; het
   bedrag wordt teruggerekend naar het nettobedrag voor Billit
   (`BILLIT_VAT_PERCENTAGE`, standaard 21% — **laat dit percentage
   bevestigen door een boekhouder** voor je op productie schakelt). De
@@ -222,6 +231,21 @@ annuleren, zie "Boeking annuleren en verplaatsen" hieronder) — die moeten
   zie `.env.example`) en faalt nooit de betaling zelf: lukt de
   factuuraanroep niet, dan wordt dit enkel gelogd zodat het later manueel
   of via een retry hersteld kan worden.
+
+  **Werkt de koppeling?** "Meer acties" → **Facturatie nakijken (Billit)**
+  (enkel Admin) toont of de sleutels ingesteld zijn en op welke omgeving ze
+  wijzen (sandbox of productie), en maakt op één klik een testfactuur van €1
+  aan — zonder boeking, zonder klant in de agenda. Wijst de configuratie naar
+  productie, dan is die knop een echt document in de boekhouding en vraagt de
+  route een expliciete bevestiging (`/api/admin/billit-test`).
+
+  In het detailvenster van een boeking staat voortaan ook of er een factuur
+  gevraagd is en welk Billit-nummer die gekregen heeft — of dat die nog niet
+  aangemaakt is.
+
+  Vanaf de commandolijn kan hetzelfde met `node scripts/billit-controle.js`
+  (of `--droog` om enkel te tonen wát er verstuurd zou worden, zonder Billit
+  aan te raken).
 - **Bevestigingsmail** (`lib/email.js`): zodra een boeking online betaald is
   via Mollie, gaat er een bevestigingsmail naar de klant én een interne
   meldingsmail (incl. de notitie van de klant) naar `NOTIFY_EMAIL`.

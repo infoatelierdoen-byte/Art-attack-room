@@ -6,7 +6,7 @@ const nextConfig = {
   // effectief op Vercel draait. Zonder dat is "het werkt niet" niet te
   // onderscheiden van "de nieuwe versie staat er nog niet op" (aug 2026).
   // BIJ ELKE NIEUWE VERSIE HIER OPHOGEN.
-  env: { APP_VERSIE: "57" },
+  env: { APP_VERSIE: "58" },
   // De widget wordt via een Wix HTML-embed (iframe) getoond — X-Frame-Options
   // moet dus NIET op DENY/SAMEORIGIN staan voor de /widget route.
   async headers() {

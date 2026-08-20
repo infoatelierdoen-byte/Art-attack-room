@@ -286,6 +286,12 @@ export default function Backend() {
   const [showAddPersonal, setShowAddPersonal] = useState(false);
   const [personalForm, setPersonalForm] = useState({ title: "", dateISO: "", start: "", end: "" });
 
+  // Billit-koppeling nakijken (Meer acties -> Facturatie nakijken).
+  const [showBillit, setShowBillit] = useState(false);
+  const [billitStatus, setBillitStatus] = useState(null);
+  const [billitResultaat, setBillitResultaat] = useState(null);
+  const [billitBezig, setBillitBezig] = useState(false);
+
   const [showTimeBlock, setShowTimeBlock] = useState(false);
   const [blockForm, setBlockForm] = useState(EMPTY_BLOCK_FORM);
   const [blockError, setBlockError] = useState("");
@@ -476,6 +482,33 @@ export default function Backend() {
     setShowAddPersonal(false);
     setPersonalForm({ title: "", dateISO: "", start: "", end: "" });
     load(monday);
+  }
+
+  // --- Facturatie (Billit) ---
+
+  async function openBillit() {
+    setShowBillit(true);
+    setBillitResultaat(null);
+    setBillitStatus(null);
+    const res = await fetch("/api/admin/billit-test");
+    setBillitStatus(await res.json());
+  }
+
+  async function testBillit() {
+    setBillitBezig(true);
+    setBillitResultaat(null);
+    try {
+      const res = await fetch("/api/admin/billit-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bevestigProductie: billitStatus?.omgeving === "productie" })
+      });
+      setBillitResultaat(await res.json());
+    } catch (err) {
+      setBillitResultaat({ ok: false, error: err.message });
+    } finally {
+      setBillitBezig(false);
+    }
   }
 
   // --- Tijdsblok ---
@@ -1365,6 +1398,7 @@ export default function Backend() {
                     {authRole === "admin" && (
                       <>
                         <div className="actions-menu-divider" />
+                        <button type="button" onClick={() => { openBillit(); setShowActionsMenu(false); }}>Facturatie nakijken (Billit)</button>
                         <button type="button" onClick={openImport}>Boekingen importeren (CSV)</button>
                         <a
                           href={`/api/admin/agenda-export?week=${monday}`}
@@ -1544,6 +1578,55 @@ export default function Backend() {
         </main>
       </div>
 
+      {showBillit && (
+        <div className="modal-backdrop" onClick={() => setShowBillit(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Facturatie nakijken (Billit)</h3>
+            {!billitStatus && <p className="muted-text">Status opvragen…</p>}
+            {billitStatus && (
+              <>
+                <p style={{ fontSize: 13, margin: "6px 0" }}>
+                  Sleutels ingesteld:{" "}
+                  <strong>{billitStatus.geconfigureerd ? "ja" : "nee"}</strong>
+                  <br />
+                  Omgeving:{" "}
+                  <strong style={{ color: billitStatus.omgeving === "productie" ? "var(--admin-accent)" : "inherit" }}>
+                    {billitStatus.omgeving === "productie" ? "PRODUCTIE (echte facturen)" : "sandbox (testomgeving)"}
+                  </strong>
+                  <br />
+                  BTW-percentage: <strong>{billitStatus.btwPercentage}%</strong>
+                </p>
+                {!billitStatus.geconfigureerd && (
+                  <p style={{ fontSize: 13 }}>
+                    Zet <code>BILLIT_API_KEY</code> en <code>BILLIT_PARTY_ID</code> in de
+                    omgevingsvariabelen van Vercel en deploy opnieuw.
+                  </p>
+                )}
+                <p style={{ fontSize: 13, color: "var(--admin-text-muted)" }}>
+                  De knop hieronder maakt één testfactuur van €1 aan in Billit — geen boeking,
+                  geen klant in de agenda. Zo weet je meteen of de koppeling werkt.
+                </p>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button type="button" onClick={() => setShowBillit(false)}>Sluiten</button>
+                  <button type="button" className="add-btn" disabled={!billitStatus.geconfigureerd || billitBezig}
+                    onClick={testBillit}>
+                    {billitBezig ? "Bezig…" : "Testfactuur aanmaken"}
+                  </button>
+                </div>
+              </>
+            )}
+            {billitResultaat && (
+              <p style={{ fontSize: 13, marginTop: 12, fontWeight: 700,
+                          color: billitResultaat.ok ? "inherit" : "var(--admin-accent)" }}>
+                {billitResultaat.ok
+                  ? `Gelukt — factuur aangemaakt in Billit, nummer ${billitResultaat.orderId}.`
+                  : `Mislukt: ${billitResultaat.error}`}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {showTimeBlock && (
         <div className="modal-backdrop" onClick={() => setShowTimeBlock(false)}>
           <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submitTimeBlock}>
@@ -1721,7 +1804,9 @@ export default function Backend() {
             </label>
             {manualForm.invoiceRequested && (
               <>
-                <input placeholder="BTW-nummer" value={manualForm.vatNumber}
+                {/* Verplicht: zonder BTW-nummer wordt het in Billit een
+                    factuur op naam van een privépersoon. */}
+                <input required placeholder="BTW-nummer (verplicht)" value={manualForm.vatNumber}
                   onChange={e => setManualForm({ ...manualForm, vatNumber: e.target.value })} />
                 <input placeholder="Bedrijfsnaam" value={manualForm.companyName}
                   onChange={e => setManualForm({ ...manualForm, companyName: e.target.value })} />
@@ -1964,6 +2049,15 @@ export default function Backend() {
               {detailTarget.dateISO} om {detailTarget.start}
               {detailTarget.amount != null && <> — €{detailTarget.amount.toFixed(2)}</>}
               {detailTarget.paymentStatus && <> ({detailTarget.paymentStatus === "paid" ? "betaald" : "nog niet betaald"})</>}
+              {detailTarget.invoiceRequested && (
+                <>
+                  <br />
+                  Factuur gevraagd —{" "}
+                  {detailTarget.billitInvoiceId
+                    ? <>aangemaakt in Billit, nummer <strong>{detailTarget.billitInvoiceId}</strong></>
+                    : <strong>nog niet in Billit aangemaakt</strong>}
+                </>
+              )}
             </p>
 
             {authRole === "admin" ? (
