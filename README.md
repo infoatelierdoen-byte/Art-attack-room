@@ -925,6 +925,51 @@ blijven.
 Dit is bewust niet met een vaste waarde in de CSS opgelost. Verandert er iets aan
 de kop of aan de werkurenrij, dan corrigeert de meting zichzelf.
 
+## Agenda exporteren (PDF)
+
+"Meer acties" → **Agenda exporteren (PDF)** geeft de weekagenda als afdrukbaar
+blad: per dag de werkuren van het team, dan elk tijdslot met alle vier de rooms
+eronder — geboekt (met naam, aantal personen, bedrag, betaalstatus en de
+notitie), vrij, of gesloten met de reden. Onderaan elke dag een dagtotaal, en
+bovenaan het weektotaal.
+
+Dit verving de vroegere "Week exporteren", die een platte tabel met boekingen
+gaf. Die toonde niet wat er nog vrij was, en dat is net wat je aan de telefoon
+nodig hebt. `/api/admin/week-export-pdf` en `generateWeekBookingsPdf()` zijn
+verwijderd; de nieuwe route is `/api/admin/agenda-export-pdf`.
+
+Diensten zonder room-toewijzing (Fluid Art) krijgen geen roomkolom maar de
+bezetting van de sessie ("3/10 plaatsen"). Enkel Admin — het blad bevat
+klantnamen, bedragen en notities.
+
+## Notitie bij een boeking
+
+In het boekingsdetail staat een vrij tekstveld waar het team een notitie kan
+schrijven of aanpassen (`/api/admin/booking-note`, max. 2000 tekens). De klant
+kan er zelf al eentje meegeven bij het boeken; dit is dezelfde `customer_note`,
+nu ook bewerkbaar. Bedoeld voor "belt nog terug over het formaat", "brengt eigen
+canvas mee", "factuur al bezorgd".
+
+De notitie is zichtbaar in de weekagenda, de PDF-export van een boeking en de
+interne bevestigingsmail — dus geen plek voor gevoelige gegevens. Dat staat ook
+bij het veld zelf.
+
+## Tekstkleur op lichte blokken — let hierop
+
+`--fluid-bg` en `--private-bg` worden in het donkere thema NIET overschreven: ze
+blijven licht. `--admin-text` wordt daar wél bijna wit. Een blok met zo'n lichte
+achtergrond dat de tekstkleur van het thema erft, wordt in het donkere thema dus
+onleesbaar — wit op crème.
+
+Dat is één keer echt misgegaan: de klantnaam en de roomcode waren in de agenda
+volledig onzichtbaar in het donkere thema, terwijl het personen-badge wél te zien
+was omdat dat zijn eigen zwarte kleur had. Daarom staat er nu op `.cal-event.attack`,
+`.fluid`, `.private-visible`, `.personal` en `.private` een expliciete donkere
+`color`. Gemeten na de fix: 14,1:1 contrast voor zowel de naam als de roomcode.
+
+**Vuistregel:** zet je een vaste lichte achtergrond, zet dan in dezelfde regel een
+vaste donkere tekstkleur. Erf nooit de themakleur op een vaste achtergrond.
+
 ## Weekagenda — hoe een boeking getoond wordt
 
 Gekozen ontwerp (Robin, aug 2026): het raster van vier rooms blijft, want elke
@@ -1113,6 +1158,8 @@ pages/
   api/admin/refund-booking.js       (deel van het bedrag) terugbetalen ZONDER te annuleren; room blijft bezet
   api/admin/change-party-size.js    aantal personen aanpassen + automatisch de best passende room kiezen
   api/admin/reopen-room.js          een room-sluiting weer opheffen (tegenhanger van close-room)
+  api/admin/booking-note.js         notitie bij een boeking bewaren of aanpassen
+  api/admin/agenda-export-pdf.js    afdrukbare weekagenda: per dag en per tijdslot alle rooms
   api/admin/close-room.js           room(s) sluiten voor een tijdslot of hele dag
   api/admin/rooms.js                roomlijst (voor het room-sluiten-scherm)
   api/admin/extra-session.js        eenmalige extra sessie buiten het uurrooster

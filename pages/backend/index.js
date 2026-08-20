@@ -273,6 +273,9 @@ export default function Backend() {
   const [partySizeInput, setPartySizeInput] = useState("");
   const [recalcPrice, setRecalcPrice] = useState(false);
   const [partySizeNotice, setPartySizeNotice] = useState("");
+  // Notitie bij een boeking, bewerkbaar vanuit het detailvenster.
+  const [noteInput, setNoteInput] = useState("");
+  const [noteNotice, setNoteNotice] = useState("");
 
   const [showActionsMenu, setShowActionsMenu] = useState(false);
 
@@ -727,6 +730,30 @@ export default function Backend() {
     setPartySizeInput(ev.partySize != null ? String(ev.partySize) : "");
     setRecalcPrice(false);
     setPartySizeNotice("");
+    setNoteInput(ev.note || "");
+    setNoteNotice("");
+  }
+
+  async function submitNote() {
+    setDetailError("");
+    setNoteNotice("");
+    setDetailSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/booking-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId: detailTarget.bookingId, note: noteInput })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Er ging iets mis.");
+      setNoteNotice("Notitie bewaard.");
+      setDetailTarget(t => t && ({ ...t, note: data.note }));
+      load(monday);
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailSubmitting(false);
+    }
   }
 
   async function submitPartySize() {
@@ -1186,11 +1213,11 @@ export default function Backend() {
                         <div className="actions-menu-divider" />
                         <button type="button" onClick={openImport}>Boekingen importeren (CSV)</button>
                         <a
-                          href={`/api/admin/week-export-pdf?week=${monday}`}
-                          title="PDF met alle boekingen van deze week, om extern te bewaren"
+                          href={`/api/admin/agenda-export-pdf?week=${monday}`}
+                          title="Afdrukbare agenda van deze week: per dag de werkuren en per tijdslot alle rooms — geboekt, vrij of gesloten"
                           onClick={() => setShowActionsMenu(false)}
                         >
-                          Week exporteren (PDF)
+                          Agenda exporteren (PDF)
                         </a>
                         <a
                           href="/api/admin/customers-export"
@@ -1746,6 +1773,38 @@ export default function Backend() {
                   {partySizeNotice && <p style={{ fontSize: 12, color: "var(--admin-accent)", margin: "6px 0 0", fontWeight: 700 }}>{partySizeNotice}</p>}
                 </div>
 
+                {/* Notitie — staat vlak onder het aantal personen, want dat zijn
+                    de twee dingen die je bij een boeking het vaakst bijwerkt. */}
+                <div className="detail-block">
+                  <label className="field-label">Notitie bij deze boeking</label>
+                  <textarea
+                    rows={3}
+                    value={noteInput}
+                    onChange={e => setNoteInput(e.target.value)}
+                    placeholder='bv. "belt nog terug over het formaat" of "brengt eigen canvas mee"'
+                    style={{ width: "100%", resize: "vertical", font: "inherit", fontSize: 13,
+                             padding: 8, borderRadius: 8, border: "1px solid var(--admin-line)",
+                             background: "var(--admin-surface)", color: "var(--admin-text)" }}
+                  />
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+                    <button
+                      type="button" className="add-btn secondary"
+                      disabled={detailSubmitting || noteInput === (detailTarget.note || "")}
+                      onClick={submitNote}
+                    >
+                      {detailSubmitting ? "Bezig…" : "Notitie bewaren"}
+                    </button>
+                    <span style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
+                      {noteInput.length}/2000
+                    </span>
+                    {noteNotice && <span style={{ fontSize: 12, color: "var(--admin-accent)", fontWeight: 700 }}>{noteNotice}</span>}
+                  </div>
+                  <p style={{ fontSize: 12, color: "var(--admin-text-muted)", margin: "6px 0 0" }}>
+                    Zichtbaar in de weekagenda, de PDF-export en de interne bevestigingsmail — dus geen
+                    plek voor gevoelige gegevens.
+                  </p>
+                </div>
+
                 <p style={{ fontSize: 12, color: "var(--admin-text-muted)" }}>
                   Vul hieronder het bedrag in en kies dan onderaan wat er moet gebeuren.
                   <br />
@@ -2110,11 +2169,16 @@ const css = `
   .cal-event-count { display: inline-block; font-size: 11px; font-weight: 700; line-height: 1.45;
     padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,0.10); color: #000; margin: 1px 0; }
   [data-theme="dark"] .cal-event-count { background: rgba(0,0,0,0.18); color: #000; }
-  .cal-event.attack { background: #FBE9E1; border-left: 3px solid var(--admin-accent); }
-  .cal-event.fluid { background: var(--fluid-bg); border-left: 3px solid var(--fluid); }
-  .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); }
-  .cal-event.personal { background: var(--private-bg); border-left: 3px solid var(--admin-text-muted); font-style: italic; }
-  .cal-event.private { background: var(--private-bg); border-left: 3px solid var(--admin-text-muted); }
+  /* Deze vier achtergronden zijn LICHT in beide thema's, dus de tekstkleur moet
+     hier expliciet donker staan. Stond die er niet, dan erfde de cel de
+     tekstkleur van het thema — bijna wit in het donkere thema — en werd de
+     klantnaam en de roomcode onleesbaar op de crème achtergrond. Enkel het
+     personen-badge bleef zichtbaar omdat dat zijn eigen zwarte kleur heeft. */
+  .cal-event.attack { background: #FBE9E1; color: #2A1B14; border-left: 3px solid var(--admin-accent); }
+  .cal-event.fluid { background: var(--fluid-bg); color: #14213A; border-left: 3px solid var(--fluid); }
+  .cal-event.private-visible { background: repeating-linear-gradient(45deg, #FBE9E1, #FBE9E1 6px, #F3DCCF 6px, #F3DCCF 12px); color: #2A1B14; }
+  .cal-event.personal { background: var(--private-bg); color: #2B2A26; border-left: 3px solid #6E6A5F; font-style: italic; }
+  .cal-event.private { background: var(--private-bg); color: #2B2A26; border-left: 3px solid #6E6A5F; }
   .cal-event.pending-reservation { border: 1px dashed var(--admin-text-muted); border-left-width: 3px; opacity: 0.85; }
   .cal-event.clickable { cursor: pointer; }
   .cal-event.clickable:hover { outline: 2px solid var(--admin-accent); outline-offset: 1px; }
@@ -2159,7 +2223,7 @@ const css = `
     user-select: none; }
   .cal-slot-tag:hover { background: var(--admin-hover); color: var(--admin-text); }
   .cal-room-booked { display: flex; flex-direction: column; gap: 1px; padding: 3px 4px; }
-  .cal-room-code { font-size: 9px; font-weight: 700; opacity: 0.65; line-height: 1.2; letter-spacing: 0.04em; }
+  .cal-room-code { font-size: 9.5px; font-weight: 700; opacity: 0.8; line-height: 1.2; letter-spacing: 0.04em; }
   /* De naam mag over meerdere regels: een roomcel is maar ~35px breed maar wel
      ~90px hoog. "Els P." over twee regels leest nog altijd beter dan "E…" op
      één regel. overflow-wrap breekt desnoods binnen een lang woord af. */

@@ -136,6 +136,37 @@ async function main() {
     log("Gift card deducted only after confirmation", Number(cardAfter[0].remaining_amount) === 50 - Number(b3.amountDue) - 0 || Number(cardAfter[0].remaining_amount) < 50, cardAfter[0].remaining_amount);
 
     // ================================================================
+    // Notitie bij een boeking (nieuw, aug 2026)
+    // ================================================================
+    let ntSlot = null;
+    for (let i = 1; i <= 40 && !ntSlot; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const av = await store.getAvailability("action_painting", iso, 2);
+      const free = av.find(sl => sl.bookable);
+      if (free) ntSlot = { iso, start: free.start };
+    }
+    const { booking: ntB } = await store.createManualBooking({
+      serviceCode: "action_painting", dateISO: ntSlot.iso, start: ntSlot.start, partySize: 2,
+      customer: { name: "Notitie Klant", email: "notitie@test.be", phone: "047" },
+      note: "oorspronkelijke notitie", paymentMethod: "cash"
+    });
+    const bewaard = await store.updateBookingNote(ntB.id, "belt nog terug over het formaat");
+    log("Notitie aanpassen lukt", bewaard.note === "belt nog terug over het formaat", bewaard.note);
+    const ntWeek = await store.getWeekSessions(mondayOfISO(ntSlot.iso));
+    const ntEv = ntWeek.find(e => e.bookingId === ntB.id);
+    log("De nieuwe notitie komt mee in de weekagenda", ntEv && ntEv.note === "belt nog terug over het formaat", ntEv && ntEv.note);
+    await store.updateBookingNote(ntB.id, "");
+    const { rows: leeg } = await pool.query("SELECT customer_note FROM bookings WHERE id = $1", [ntB.id]);
+    log("Notitie kan ook leeggemaakt worden", leeg[0].customer_note === "", JSON.stringify(leeg[0].customer_note));
+    const lang = await store.updateBookingNote(ntB.id, "x".repeat(5000));
+    log("Een te lange notitie wordt afgekapt op 2000 tekens", lang.note.length === 2000, lang.note.length);
+    let ntWeg = false;
+    try { await store.updateBookingNote("00000000-0000-0000-0000-000000000000", "test"); }
+    catch (e) { ntWeg = /niet gevonden/i.test(e.message); }
+    log("Notitie op een onbestaande boeking wordt geweigerd", ntWeg);
+
+    // ================================================================
     // Rooms sluiten en weer heropenen (nieuw, aug 2026)
     // ================================================================
     let slSlot = null;
